@@ -14,6 +14,8 @@ plugins {
     id "org.jetbrains.kotlin.plugin.serialization" version "$kotlin_version"
 }
 
+apply from: "./publish.gradle"
+
 project.group = "$project_group"
 project.version = "$project_version"
 

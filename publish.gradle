@@ -1,0 +1,44 @@
+apply plugin: 'maven-publish'
+
+
+task javadocJar(type: Jar) {
+    from javadoc
+    classifier = 'javadoc'
+}
+task sourcesJar(type: Jar) {
+    from sourceSets.main.allSource
+    classifier = 'sources'
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            from components.java
+
+            artifact javadocJar
+            artifact sourcesJar
+
+            pom {
+                resolveStrategy = Closure.DELEGATE_FIRST
+
+                description = "${project.name}"
+                name = "${project.name}"
+                url = "https://github.com/InsanusMokrassar/CaptchaPlaguBotPlugin"
+
+                scm {
+                    developerConnection = "scm:git:[fetch=]https://github.com/InsanusMokrassar/CaptchaPlaguBotPlugin.git[push=]https://github.com/InsanusMokrassar/CaptchaPlaguBotPlugin.git"
+                    url = "https://github.com/InsanusMokrassar/CaptchaPlaguBotPlugin.git"
+                }
+
+                developers {
+                    
+                }
+
+                licenses {
+                    
+                }
+            }
+            
+        }
+    }
+}
