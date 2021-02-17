@@ -1,6 +1,6 @@
 package dev.inmo.plagubot.plugins.captcha
 
-import dev.inmo.micro_utils.coroutines.safelyWithoutExceptions
+import dev.inmo.micro_utils.coroutines.*
 import dev.inmo.micro_utils.repos.create
 import dev.inmo.plagubot.Plugin
 import dev.inmo.plagubot.plugins.captcha.db.CaptchaChatsSettingsRepo
@@ -8,6 +8,8 @@ import dev.inmo.plagubot.plugins.captcha.settings.ChatSettings
 import dev.inmo.tgbotapi.bot.TelegramBot
 import dev.inmo.tgbotapi.extensions.api.answers.answerCallbackQuery
 import dev.inmo.tgbotapi.extensions.api.chat.members.*
+import dev.inmo.tgbotapi.extensions.api.deleteMessage
+import dev.inmo.tgbotapi.extensions.api.edit.ReplyMarkup.editMessageReplyMarkup
 import dev.inmo.tgbotapi.extensions.api.send.media.reply
 import dev.inmo.tgbotapi.extensions.api.send.sendDice
 import dev.inmo.tgbotapi.extensions.api.send.sendTextMessage
@@ -19,10 +21,14 @@ import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onNewCha
 import dev.inmo.tgbotapi.extensions.utils.*
 import dev.inmo.tgbotapi.extensions.utils.formatting.buildEntities
 import dev.inmo.tgbotapi.extensions.utils.formatting.regular
+import dev.inmo.tgbotapi.extensions.utils.shortcuts.executeUnsafe
+import dev.inmo.tgbotapi.requests.DeleteMessage
 import dev.inmo.tgbotapi.types.MessageEntity.textsources.mention
 import dev.inmo.tgbotapi.types.User
 import dev.inmo.tgbotapi.types.chat.ChatPermissions
+import dev.inmo.tgbotapi.types.chat.LeftRestrictionsChatPermissions
 import dev.inmo.tgbotapi.types.dice.SlotMachineDiceAnimationType
+import dev.inmo.tgbotapi.types.message.abstracts.Message
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.toList
@@ -39,8 +45,10 @@ class CaptchaBotPlugin : Plugin {
         onNewChatMembers(
             additionalFilter = {
                 it.chat.asPublicChat() != null
-            }
+            },
+            includeFilterByChatInBehaviourSubContext = false
         ) {
+            safelyWithoutExceptions { deleteMessage(it) }
             val eventDateTime = it.date
             val chat = it.chat.requirePublicChat()
             val newUsers = it.chatEvent.members
@@ -54,21 +62,22 @@ class CaptchaBotPlugin : Plugin {
             val settings = repo.getById(it.chat.id) ?: repo.create(ChatSettings(it.chat.id)).firstOrNull() ?: return@onNewChatMembers
             val userBanDateTime = eventDateTime + settings.checkTimeSpan
             val authorized = Channel<User>(newUsers.size)
+            val messagesToDelete = Channel<Message>(Channel.UNLIMITED)
             val subContexts = newUsers.map {
-                doInSubContext {
+                doInSubContext(stopOnCompletion = false) {
                     val sentMessage = sendTextMessage(
                         chat,
                         buildEntities {
                             +it.mention(it.firstName)
-                            regular(settings.captchaText)
+                            regular(", ${settings.captchaText}")
                         }
-                    )
+                    ).also { messagesToDelete.send(it) }
                     val sentDice = sendDice(
                         sentMessage.chat,
                         SlotMachineDiceAnimationType,
                         replyToMessageId = sentMessage.messageId,
                         replyMarkup = slotMachineReplyMarkup()
-                    )
+                    ).also { messagesToDelete.send(it) }
                     val reels = sentDice.content.dice.calculateSlotMachineResult()!!
                     val leftToClick = mutableListOf(
                         reels.left.asSlotMachineReelImage.text,
@@ -77,15 +86,25 @@ class CaptchaBotPlugin : Plugin {
                     )
 
                     launch {
+                        val clicked = arrayOf<String?>(null, null, null)
                         while (leftToClick.isNotEmpty()) {
                             val userClicked = waitDataCallbackQuery { if (user.id == it.id) this else null }.first()
-                            answerCallbackQuery(userClicked, "⏳")
                             if (userClicked.data == leftToClick.first()) {
-                                leftToClick.removeAt(0)
+                                clicked[3 - leftToClick.size] = leftToClick.removeAt(0)
+                                if (clicked.contains(null)) {
+                                    safelyWithoutExceptions { answerCallbackQuery(userClicked, "Ok, next one") }
+                                    editMessageReplyMarkup(sentDice, slotMachineReplyMarkup(clicked[0], clicked[1], clicked[2]))
+                                } else {
+                                    safelyWithoutExceptions { answerCallbackQuery(userClicked, "Thank you and welcome", showAlert = true) }
+                                    safelyWithoutExceptions { deleteMessage(sentMessage) }
+                                    safelyWithoutExceptions { deleteMessage(sentDice) }
+                                }
+                            } else {
+                                safelyWithoutExceptions { answerCallbackQuery(userClicked, "Nope") }
                             }
                         }
                         authorized.send(it)
-                        safelyWithoutExceptions { restrictChatMember(chat, it, permissions = authorizedUserChatPermissions) }
+                        safelyWithoutExceptions { restrictChatMember(chat, it, permissions = LeftRestrictionsChatPermissions) }
                         stop()
                     }
 
@@ -95,14 +114,18 @@ class CaptchaBotPlugin : Plugin {
 
             delay((userBanDateTime - eventDateTime).millisecondsLong)
 
-            val authorizedUsers = authorized.toList()
             authorized.close()
+            val authorizedUsers = authorized.toList()
 
             subContexts.forEach { (context, user) ->
                 if (user !in authorizedUsers) {
                     context.stop()
                     safelyWithoutExceptions { kickChatMember(chat, user) }
                 }
+            }
+            messagesToDelete.close()
+            for (message in messagesToDelete) {
+                executeUnsafe(DeleteMessage(message.chat.id, message.messageId), retries = 0)
             }
         }
     }
