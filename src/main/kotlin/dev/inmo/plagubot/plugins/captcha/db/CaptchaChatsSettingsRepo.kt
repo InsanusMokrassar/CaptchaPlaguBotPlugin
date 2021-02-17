@@ -1,7 +1,6 @@
 package dev.inmo.plagubot.plugins.captcha.db
 
-import dev.inmo.micro_utils.repos.exposed.AbstractExposedCRUDRepo
-import dev.inmo.micro_utils.repos.exposed.ExposedCRUDRepo
+import dev.inmo.micro_utils.repos.exposed.*
 import dev.inmo.micro_utils.repos.exposed.keyvalue.ExposedKeyValueRepo
 import dev.inmo.plagubot.plugins.captcha.settings.*
 import dev.inmo.tgbotapi.types.ChatId
@@ -17,7 +16,7 @@ class CaptchaChatsSettingsRepo(
 ) {
     private val chatIdColumn = long("chatId")
     private val checkTimeSecondsColumn = integer("checkTime")
-    private val solveCaptchaTextColumn = text("checkTime")
+    private val solveCaptchaTextColumn = text("solveCaptchaText")
 
     override val primaryKey = PrimaryKey(chatIdColumn)
 
@@ -53,4 +52,8 @@ class CaptchaChatsSettingsRepo(
             get(checkTimeSecondsColumn),
             get(solveCaptchaTextColumn)
         )
+
+    init {
+        initTable()
+    }
 }
