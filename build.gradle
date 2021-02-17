@@ -17,7 +17,7 @@ plugins {
 apply from: "./publish.gradle"
 
 project.group = "$project_group"
-project.version = "$project_version"
+project.version = "$plagubot_version"
 
 repositories {
     mavenLocal()
