@@ -23,8 +23,7 @@ import dev.inmo.tgbotapi.extensions.utils.*
 import dev.inmo.tgbotapi.extensions.utils.formatting.buildEntities
 import dev.inmo.tgbotapi.extensions.utils.formatting.regular
 import dev.inmo.tgbotapi.extensions.utils.shortcuts.executeUnsafe
-import dev.inmo.tgbotapi.libraries.cache.admins.AdminsCacheAPI
-import dev.inmo.tgbotapi.libraries.cache.admins.adminsPlugin
+import dev.inmo.tgbotapi.libraries.cache.admins.*
 import dev.inmo.tgbotapi.requests.DeleteMessage
 import dev.inmo.tgbotapi.types.BotCommand
 import dev.inmo.tgbotapi.types.MessageEntity.textsources.mention
@@ -44,12 +43,6 @@ import org.jetbrains.exposed.sql.Database
 
 private const val enableAutoDeleteCommands = "captcha_auto_delete_commands_on"
 private const val disableAutoDeleteCommands = "captcha_auto_delete_commands_off"
-
-private suspend fun AdminsCacheAPI.verifyMessageFromAdmin(message: CommonMessage<*>) = when (message) {
-    is CommonGroupContentMessage<*> -> getChatAdmins(message.chat.id) ?.any { it.user.id == message.user.id } == true
-    is AnonymousGroupContentMessage<*> -> true
-    else -> false
-}
 
 @Serializable
 class CaptchaBotPlugin : Plugin {
@@ -160,21 +153,11 @@ class CaptchaBotPlugin : Plugin {
         }
 
         if (adminsAPI != null) {
-            suspend fun <T : MessageContent> CommonMessage<T>.doAfterVerification(block: suspend () -> Unit) {
-                val chat = chat
-
-                if (chat is PublicChat) {
-                    val verified = adminsAPI.verifyMessageFromAdmin(this)
-                    if (verified) {
-                        block()
-                    }
-                }
-            }
             onCommand(
                 enableAutoDeleteCommands,
                 requireOnlyCommandInMessage = false
             ) { message ->
-                message.doAfterVerification {
+                message.doAfterVerification(adminsAPI) {
                     val settings = message.chat.settings()
 
                     repo.update(
@@ -189,7 +172,7 @@ class CaptchaBotPlugin : Plugin {
                 disableAutoDeleteCommands,
                 requireOnlyCommandInMessage = false
             ) { message ->
-                message.doAfterVerification {
+                message.doAfterVerification(adminsAPI) {
                     val settings = message.chat.settings()
 
                     repo.update(
