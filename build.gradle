@@ -23,6 +23,16 @@ repositories {
     mavenLocal()
     mavenCentral()
     jcenter()
+    if ((project.hasProperty("GITHUB_USER") || System.getenv("GITHUB_USER") != null) && (project.hasProperty("GITHUB_TOKEN") || System.getenv("GITHUB_TOKEN") != null)) {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/InsanusMokrassar/TelegramBotApiLibraries")
+            credentials {
+                username = project.hasProperty("GITHUB_USER") ? project.getProperty("GITHUB_USER") : System.getenv("GITHUB_USER")
+                password = project.hasProperty("GITHUB_TOKEN") ? project.getProperty("GITHUB_TOKEN") : System.getenv("GITHUB_TOKEN")
+            }
+        }
+    }
 }
 
 dependencies {
