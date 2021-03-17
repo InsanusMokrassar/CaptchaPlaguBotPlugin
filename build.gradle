@@ -17,12 +17,22 @@ plugins {
 apply from: "./publish.gradle"
 
 project.group = "$project_group"
-project.version = "$plagubot_version"
+project.version = "$project_version"
 
 repositories {
     mavenLocal()
     mavenCentral()
     jcenter()
+    if ((project.hasProperty("GITHUB_USER") || System.getenv("GITHUB_USER") != null) && (project.hasProperty("GITHUB_TOKEN") || System.getenv("GITHUB_TOKEN") != null)) {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/InsanusMokrassar/TelegramBotApiLibraries")
+            credentials {
+                username = project.hasProperty("GITHUB_USER") ? project.getProperty("GITHUB_USER") : System.getenv("GITHUB_USER")
+                password = project.hasProperty("GITHUB_TOKEN") ? project.getProperty("GITHUB_TOKEN") : System.getenv("GITHUB_TOKEN")
+            }
+        }
+    }
 }
 
 dependencies {
@@ -32,4 +42,5 @@ dependencies {
 
     api "dev.inmo:plagubot.plugin:$plagubot_version"
     api "dev.inmo:micro_utils.repos.exposed:$micro_utils_version"
+    api "dev.inmo:tgbotapi.libraries.cache.admins.plagubot:$tgbotapi_libraries_version"
 }

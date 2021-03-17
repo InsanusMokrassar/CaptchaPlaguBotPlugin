@@ -10,7 +10,8 @@ import kotlinx.serialization.Transient
 data class ChatSettings(
     val chatId: ChatId,
     val checkTime: Seconds = 60,
-    val captchaText: String = "solve next captcha:"
+    val captchaText: String = "solve next captcha:",
+    val autoRemoveCommands: Boolean = false
 ) {
     @Transient
     val checkTimeSpan = TimeSpan(checkTime * 1000.0)

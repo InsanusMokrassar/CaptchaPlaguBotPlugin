@@ -17,6 +17,7 @@ class CaptchaChatsSettingsRepo(
     private val chatIdColumn = long("chatId")
     private val checkTimeSecondsColumn = integer("checkTime")
     private val solveCaptchaTextColumn = text("solveCaptchaText")
+    private val autoRemoveCommandsColumn = bool("autoRemoveCommands")
 
     override val primaryKey = PrimaryKey(chatIdColumn)
 
@@ -30,19 +31,22 @@ class CaptchaChatsSettingsRepo(
         it[chatIdColumn] = value.chatId.chatId
         it[checkTimeSecondsColumn] = value.checkTime
         it[solveCaptchaTextColumn] = value.captchaText
+        it[autoRemoveCommandsColumn] = value.autoRemoveCommands
     }
 
     override fun update(id: ChatId, value: ChatSettings, it: UpdateStatement) {
         if (id.chatId == value.chatId.chatId) {
             it[checkTimeSecondsColumn] = value.checkTime
             it[solveCaptchaTextColumn] = value.captchaText
+            it[autoRemoveCommandsColumn] = value.autoRemoveCommands
         }
     }
 
     override fun InsertStatement<Number>.asObject(value: ChatSettings): ChatSettings = ChatSettings(
         get(chatIdColumn).toChatId(),
         get(checkTimeSecondsColumn),
-        get(solveCaptchaTextColumn)
+        get(solveCaptchaTextColumn),
+        get(autoRemoveCommandsColumn)
     )
 
     override val selectById: SqlExpressionBuilder.(ChatId) -> Op<Boolean> = { chatIdColumn.eq(it.chatId) }
@@ -50,7 +54,8 @@ class CaptchaChatsSettingsRepo(
         get() = ChatSettings(
             get(chatIdColumn).toChatId(),
             get(checkTimeSecondsColumn),
-            get(solveCaptchaTextColumn)
+            get(solveCaptchaTextColumn),
+            get(autoRemoveCommandsColumn)
         )
 
     init {
