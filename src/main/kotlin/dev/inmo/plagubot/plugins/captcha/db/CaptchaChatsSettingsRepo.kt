@@ -2,6 +2,7 @@ package dev.inmo.plagubot.plugins.captcha.db
 
 import dev.inmo.micro_utils.repos.exposed.*
 import dev.inmo.plagubot.plugins.captcha.provider.CaptchaProvider
+import dev.inmo.plagubot.plugins.captcha.provider.SimpleCaptchaProvider
 import dev.inmo.plagubot.plugins.captcha.settings.*
 import dev.inmo.tgbotapi.types.ChatId
 import dev.inmo.tgbotapi.types.toChatId
@@ -14,13 +15,17 @@ private val captchaProviderSerialFormat = Json {
     ignoreUnknownKeys = true
 }
 
+private val defaultCaptchaProviderValue = captchaProviderSerialFormat.encodeToString(CaptchaProvider.serializer(), SimpleCaptchaProvider())
+
 class CaptchaChatsSettingsRepo(
     override val database: Database
 ) : AbstractExposedCRUDRepo<ChatSettings, ChatId, ChatSettings>(
     tableName = "CaptchaChatsSettingsRepo"
 ) {
     private val chatIdColumn = long("chatId")
-    private val captchaProviderColumn = text("captchaProvider")
+    private val captchaProviderColumn = text("captchaProvider").apply {
+        default(defaultCaptchaProviderValue)
+    }
     private val autoRemoveCommandsColumn = bool("autoRemoveCommands")
 
     override val primaryKey = PrimaryKey(chatIdColumn)
