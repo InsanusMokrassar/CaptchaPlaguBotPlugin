@@ -146,7 +146,7 @@ data class SimpleCaptchaProvider(
         newUsers.mapNotNull {
             safelyWithoutExceptions {
                 launch {
-                    doInSubContext {
+                    doInSubContext(stopOnCompletion = false) {
                         val callbackData = uuid4().toString()
                         val sentMessage = sendTextMessage(
                             chat,
@@ -179,11 +179,14 @@ data class SimpleCaptchaProvider(
                             stop()
                         }
 
-                        delay((userBanDateTime - eventDateTime).millisecondsLong)
+                        launch {
+                            delay((userBanDateTime - eventDateTime).millisecondsLong)
 
-                        job.cancel()
-                        if (kick) {
-                            safelyWithoutExceptions { kickChatMember(chat, it) }
+                            job.cancel()
+                            if (kick) {
+                                safelyWithoutExceptions { kickChatMember(chat, it) }
+                            }
+                            stop()
                         }
                     }
                 }
