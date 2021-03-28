@@ -165,7 +165,7 @@ data class SimpleCaptchaProvider(
                             }
                         }
 
-                        val job = launch {
+                        val job = parallel {
                             waitDataCallbackQuery {
                                 if (it.id == user.id && this.data == callbackData) {
                                     this
@@ -179,15 +179,15 @@ data class SimpleCaptchaProvider(
                             stop()
                         }
 
-                        launch {
-                            delay((userBanDateTime - eventDateTime).millisecondsLong)
+                        delay((userBanDateTime - eventDateTime).millisecondsLong)
 
+                        if (job.isActive) {
                             job.cancel()
                             if (kick) {
                                 safelyWithoutExceptions { kickChatMember(chat, it) }
                             }
-                            stop()
                         }
+                        stop()
                     }
                 }
             }
