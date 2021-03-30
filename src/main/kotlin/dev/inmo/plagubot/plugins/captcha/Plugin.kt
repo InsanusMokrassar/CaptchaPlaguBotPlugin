@@ -4,15 +4,15 @@ import dev.inmo.micro_utils.coroutines.*
 import dev.inmo.micro_utils.repos.create
 import dev.inmo.plagubot.Plugin
 import dev.inmo.plagubot.plugins.captcha.db.CaptchaChatsSettingsRepo
+import dev.inmo.plagubot.plugins.captcha.provider.*
 import dev.inmo.plagubot.plugins.captcha.settings.ChatSettings
 import dev.inmo.tgbotapi.bot.TelegramBot
 import dev.inmo.tgbotapi.extensions.api.answers.answerCallbackQuery
 import dev.inmo.tgbotapi.extensions.api.chat.members.*
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
 import dev.inmo.tgbotapi.extensions.api.edit.ReplyMarkup.editMessageReplyMarkup
+import dev.inmo.tgbotapi.extensions.api.send.*
 import dev.inmo.tgbotapi.extensions.api.send.media.reply
-import dev.inmo.tgbotapi.extensions.api.send.sendDice
-import dev.inmo.tgbotapi.extensions.api.send.sendTextMessage
 import dev.inmo.tgbotapi.extensions.behaviour_builder.*
 import dev.inmo.tgbotapi.extensions.behaviour_builder.expectations.waitBaseInlineQuery
 import dev.inmo.tgbotapi.extensions.behaviour_builder.expectations.waitDataCallbackQuery
@@ -20,6 +20,7 @@ import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onComman
 import dev.inmo.tgbotapi.updateshandlers.FlowsUpdatesFilter
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onNewChatMembers
 import dev.inmo.tgbotapi.extensions.utils.*
+import dev.inmo.tgbotapi.extensions.utils.extensions.parseCommandsWithParams
 import dev.inmo.tgbotapi.extensions.utils.formatting.buildEntities
 import dev.inmo.tgbotapi.extensions.utils.formatting.regular
 import dev.inmo.tgbotapi.extensions.utils.shortcuts.executeUnsafe
@@ -44,6 +45,14 @@ import org.jetbrains.exposed.sql.Database
 private const val enableAutoDeleteCommands = "captcha_auto_delete_commands_on"
 private const val disableAutoDeleteCommands = "captcha_auto_delete_commands_off"
 
+private const val enableSlotMachineCaptcha = "captcha_use_slot_machine"
+private const val enableSimpleCaptcha = "captcha_use_simple"
+private const val enableExpressionCaptcha = "captcha_use_expression"
+
+private val changeCaptchaMethodCommandRegex = Regex(
+    "captcha_use_(slot_machine)|(simple)|expression"
+)
+
 @Serializable
 class CaptchaBotPlugin : Plugin {
     override suspend fun getCommands(): List<BotCommand> = listOf(
@@ -54,6 +63,18 @@ class CaptchaBotPlugin : Plugin {
         BotCommand(
             disableAutoDeleteCommands,
             "Disable auto removing of commands addressed to captcha plugin"
+        ),
+        BotCommand(
+            enableSlotMachineCaptcha,
+            "Change captcha method to slot machine"
+        ),
+        BotCommand(
+            enableSimpleCaptcha,
+            "Change captcha method to simple button"
+        ),
+        BotCommand(
+            enableExpressionCaptcha,
+            "Change captcha method to expressions"
         )
     )
 
@@ -86,6 +107,37 @@ class CaptchaBotPlugin : Plugin {
         }
 
         if (adminsAPI != null) {
+            onCommand(changeCaptchaMethodCommandRegex) {
+                val settings = it.chat.settings()
+
+                if (adminsAPI.sentByAdmin(it) != true) {
+                    return@onCommand
+                }
+                if (settings.autoRemoveCommands) {
+                    safelyWithoutExceptions { deleteMessage(it) }
+                }
+                val commands = it.parseCommandsWithParams()
+                val changeCommand = commands.keys.first {
+                    changeCaptchaMethodCommandRegex.matches(it)
+                }
+                val captcha = when (changeCommand) {
+                    enableSimpleCaptcha -> SimpleCaptchaProvider()
+                    enableExpressionCaptcha -> ExpressionCaptchaProvider()
+                    enableSlotMachineCaptcha -> SlotMachineCaptchaProvider()
+                    else -> return@onCommand
+                }
+                val newSettings = settings.copy(captchaProvider = captcha)
+                if (repo.contains(it.chat.id)) {
+                    repo.update(it.chat.id, newSettings)
+                } else {
+                    repo.create(newSettings)
+                }
+                sendMessage(it.chat, "Settings updated").also { sent ->
+                    delay(5000L)
+                    deleteMessage(sent)
+                }
+            }
+
             onCommand(
                 enableAutoDeleteCommands,
                 requireOnlyCommandInMessage = false
