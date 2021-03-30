@@ -50,7 +50,7 @@ private const val enableSimpleCaptcha = "captcha_use_simple"
 private const val enableExpressionCaptcha = "captcha_use_expression"
 
 private val changeCaptchaMethodCommandRegex = Regex(
-    "captcha_use_(slot_machine)|(simple)|expression"
+    "captcha_use_((slot_machine)|(simple)|(expression))"
 )
 
 @Serializable
@@ -108,22 +108,24 @@ class CaptchaBotPlugin : Plugin {
 
         if (adminsAPI != null) {
             onCommand(changeCaptchaMethodCommandRegex) {
-                val settings = it.chat.settings()
-
                 if (adminsAPI.sentByAdmin(it) != true) {
                     return@onCommand
                 }
+
+                val settings = it.chat.settings()
                 if (settings.autoRemoveCommands) {
                     safelyWithoutExceptions { deleteMessage(it) }
                 }
                 val commands = it.parseCommandsWithParams()
                 val changeCommand = commands.keys.first {
+                    println(it)
                     changeCaptchaMethodCommandRegex.matches(it)
                 }
-                val captcha = when (changeCommand) {
-                    enableSimpleCaptcha -> SimpleCaptchaProvider()
-                    enableExpressionCaptcha -> ExpressionCaptchaProvider()
-                    enableSlotMachineCaptcha -> SlotMachineCaptchaProvider()
+                println(changeCommand)
+                val captcha = when {
+                    changeCommand.startsWith(enableSimpleCaptcha) -> SimpleCaptchaProvider()
+                    changeCommand.startsWith(enableExpressionCaptcha) -> ExpressionCaptchaProvider()
+                    changeCommand.startsWith(enableSlotMachineCaptcha) -> SlotMachineCaptchaProvider()
                     else -> return@onCommand
                 }
                 val newSettings = settings.copy(captchaProvider = captcha)

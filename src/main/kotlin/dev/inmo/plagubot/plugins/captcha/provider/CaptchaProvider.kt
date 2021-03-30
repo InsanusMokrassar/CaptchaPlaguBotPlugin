@@ -33,7 +33,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.toList
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
-import kotlin.math.abs
 import kotlin.random.Random
 
 @Serializable
@@ -230,7 +229,7 @@ private object ExpressionBuilder {
         operations.forEach {
             val rightOne = createNumber(max)
             current = it.run { current.perform(rightOne) }
-            numbersString = " ${it.asString()} $numbersString"
+            numbersString += " ${it.asString()} $rightOne"
         }
         return current to numbersString
     }
@@ -240,9 +239,11 @@ private object ExpressionBuilder {
 data class ExpressionCaptchaProvider(
     val checkTimeSeconds: Seconds = 60,
     val captchaText: String = "solve next captcha:",
+    val leftRetriesText: String = "Nope, left retries: ",
     val maxPerNumber: Int = 10,
     val operations: Int = 2,
     val answers: Int = 6,
+    val attempts: Int = 3,
     val kick: Boolean = true
 ) : CaptchaProvider() {
     @Transient
@@ -254,7 +255,7 @@ data class ExpressionCaptchaProvider(
         newUsers: List<User>
     ) {
         val userBanDateTime = eventDateTime + checkTimeSpan
-        newUsers.mapNotNull {
+        newUsers.mapNotNull { user ->
             safelyWithoutExceptions {
                 launch {
                     doInSubContext {
@@ -272,7 +273,7 @@ data class ExpressionCaptchaProvider(
                         val sentMessage = sendTextMessage(
                             chat,
                             buildEntities {
-                                +it.mention(it.firstName)
+                                +user.mention(user.firstName)
                                 regular(", $captchaText ")
                                 bold(callbackData.second)
                             },
@@ -289,28 +290,44 @@ data class ExpressionCaptchaProvider(
                             }
                         }
 
+                        var passed = true
+                        val callback: suspend (Boolean) -> Unit = {
+                            removeRedundantMessages()
+                            passed = it
+                            if (it) {
+                                safelyWithoutExceptions { restrictChatMember(chat, user, permissions = LeftRestrictionsChatPermissions) }
+                            } else {
+                                if (kick) {
+                                    safelyWithoutExceptions { kickChatMember(chat, user) }
+                                }
+                            }
+                        }
+
                         val job = parallel {
+                            var leftAttempts = attempts
                             waitDataCallbackQuery {
-                                if (it.id == user.id && this.data == correctAnswer) {
-                                    this
-                                } else {
-                                    null
+                                when {
+                                    this.user.id != user.id -> null
+                                    this.data != correctAnswer -> {
+                                        leftAttempts--
+                                        if (leftAttempts < 1) {
+                                            this
+                                        } else {
+                                            launch { answerCallbackQuery(this@waitDataCallbackQuery, leftRetriesText + leftAttempts) }
+                                            null
+                                        }
+                                    }
+                                    else -> this
                                 }
                             }.first()
 
-                            removeRedundantMessages()
-                            safelyWithoutExceptions { restrictChatMember(chat, it, permissions = LeftRestrictionsChatPermissions) }
-                            stop()
+                            callback(leftAttempts > 0)
                         }
 
                         delay((userBanDateTime - eventDateTime).millisecondsLong)
 
-                        if (job.isActive) {
-                            job.cancel()
-                            if (kick) {
-                                safelyWithoutExceptions { kickChatMember(chat, it) }
-                            }
-                        }
+                        if (job.isActive) job.cancel()
+                        callback(passed)
                     }
                 }
             }
