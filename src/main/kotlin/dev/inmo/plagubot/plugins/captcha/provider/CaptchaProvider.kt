@@ -16,8 +16,7 @@ import dev.inmo.tgbotapi.extensions.behaviour_builder.*
 import dev.inmo.tgbotapi.extensions.behaviour_builder.expectations.waitDataCallbackQuery
 import dev.inmo.tgbotapi.extensions.utils.asSlotMachineReelImage
 import dev.inmo.tgbotapi.extensions.utils.calculateSlotMachineResult
-import dev.inmo.tgbotapi.extensions.utils.formatting.buildEntities
-import dev.inmo.tgbotapi.extensions.utils.formatting.regular
+import dev.inmo.tgbotapi.extensions.utils.formatting.*
 import dev.inmo.tgbotapi.extensions.utils.shortcuts.executeUnsafe
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.InlineKeyboardMarkup
 import dev.inmo.tgbotapi.requests.DeleteMessage
@@ -34,6 +33,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.toList
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import kotlin.math.abs
+import kotlin.random.Random
 
 @Serializable
 sealed class CaptchaProvider {
@@ -188,6 +189,128 @@ data class SimpleCaptchaProvider(
                             }
                         }
                         stop()
+                    }
+                }
+            }
+        }.joinAll()
+    }
+}
+
+private object ExpressionBuilder {
+    sealed class ExpressionOperation {
+        object PlusExpressionOperation : ExpressionOperation() {
+            override fun asString(): String = "+"
+
+            override fun Int.perform(other: Int): Int = plus(other)
+        }
+        object MinusExpressionOperation : ExpressionOperation() {
+            override fun asString(): String = "-"
+
+            override fun Int.perform(other: Int): Int = minus(other)
+        }
+        abstract fun asString(): String
+        abstract fun Int.perform(other: Int): Int
+    }
+    private val experssions = listOf(ExpressionOperation.PlusExpressionOperation, ExpressionOperation.MinusExpressionOperation)
+
+    private fun createNumber(max: Int) = Random.nextInt(max + 1)
+    fun generateResult(max: Int, operationsNumber: Int = 1): Int {
+        val operations = (0 until operationsNumber).map { experssions.random() }
+        var current = createNumber(max)
+        operations.forEach {
+            val rightOne = createNumber(max)
+            current = it.run { current.perform(rightOne) }
+        }
+        return current
+    }
+    fun createExpression(max: Int, operationsNumber: Int = 1): Pair<Int, String> {
+        val operations = (0 until operationsNumber).map { experssions.random() }
+        var current = createNumber(max)
+        var numbersString = "$current"
+        operations.forEach {
+            val rightOne = createNumber(max)
+            current = it.run { current.perform(rightOne) }
+            numbersString = " ${it.asString()} $numbersString"
+        }
+        return current to numbersString
+    }
+}
+
+@Serializable
+data class ExpressionCaptchaProvider(
+    val checkTimeSeconds: Seconds = 60,
+    val captchaText: String = "solve next captcha:",
+    val maxPerNumber: Int = 10,
+    val operations: Int = 2,
+    val answers: Int = 6,
+    val kick: Boolean = true
+) : CaptchaProvider() {
+    @Transient
+    private val checkTimeSpan = checkTimeSeconds.seconds
+
+    override suspend fun BehaviourContext.doAction(
+        eventDateTime: DateTime,
+        chat: GroupChat,
+        newUsers: List<User>
+    ) {
+        val userBanDateTime = eventDateTime + checkTimeSpan
+        newUsers.mapNotNull {
+            safelyWithoutExceptions {
+                launch {
+                    doInSubContext {
+                        val callbackData = ExpressionBuilder.createExpression(
+                            maxPerNumber,
+                            operations
+                        )
+                        val correctAnswer = callbackData.first.toString()
+                        val answers = (0 until answers - 1).map {
+                            ExpressionBuilder.generateResult(maxPerNumber, operations)
+                        }.toMutableList().also { orderedAnswers ->
+                            val correctAnswerPosition = Random.nextInt(orderedAnswers.size)
+                            orderedAnswers.add(correctAnswerPosition, callbackData.first)
+                        }.toList()
+                        val sentMessage = sendTextMessage(
+                            chat,
+                            buildEntities {
+                                +it.mention(it.firstName)
+                                regular(", $captchaText ")
+                                bold(callbackData.second)
+                            },
+                            replyMarkup = dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup(
+                                answers.map {
+                                    CallbackDataInlineKeyboardButton(it.toString(), it.toString())
+                                }.chunked(3)
+                            )
+                        )
+
+                        suspend fun removeRedundantMessages() {
+                            safelyWithoutExceptions {
+                                deleteMessage(sentMessage)
+                            }
+                        }
+
+                        val job = parallel {
+                            waitDataCallbackQuery {
+                                if (it.id == user.id && this.data == correctAnswer) {
+                                    this
+                                } else {
+                                    null
+                                }
+                            }.first()
+
+                            removeRedundantMessages()
+                            safelyWithoutExceptions { restrictChatMember(chat, it, permissions = LeftRestrictionsChatPermissions) }
+                            stop()
+                        }
+
+                        delay((userBanDateTime - eventDateTime).millisecondsLong)
+
+                        if (job.isActive) {
+                            job.cancel()
+                            if (kick) {
+                                safelyWithoutExceptions { kickChatMember(chat, it) }
+                            }
+                        }
                     }
                 }
             }
