@@ -103,7 +103,11 @@ class CaptchaBotPlugin : Plugin {
                 )
             }
             val settings = it.chat.settings()
-            settings.captchaProvider.apply { doAction(it.date, chat, newUsers) }
+            doInSubContext(stopOnCompletion = false) {
+                launch {
+                    settings.captchaProvider.apply { doAction(it.date, chat, newUsers) }
+                }
+            }
         }
 
         if (adminsAPI != null) {
