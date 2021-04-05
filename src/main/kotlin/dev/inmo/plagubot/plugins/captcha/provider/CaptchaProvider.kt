@@ -31,6 +31,8 @@ import dev.inmo.tgbotapi.types.message.abstracts.Message
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.toList
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import kotlin.random.Random
@@ -256,79 +258,86 @@ data class ExpressionCaptchaProvider(
     ) {
         val userBanDateTime = eventDateTime + checkTimeSpan
         newUsers.mapNotNull { user ->
-            safelyWithoutExceptions {
-                launch {
-                    doInSubContext {
-                        val callbackData = ExpressionBuilder.createExpression(
-                            maxPerNumber,
-                            operations
+            launch {
+                doInSubContext {
+                    val callbackData = ExpressionBuilder.createExpression(
+                        maxPerNumber,
+                        operations
+                    )
+                    val correctAnswer = callbackData.first.toString()
+                    val answers = (0 until answers - 1).map {
+                        ExpressionBuilder.generateResult(maxPerNumber, operations)
+                    }.toMutableList().also { orderedAnswers ->
+                        val correctAnswerPosition = Random.nextInt(orderedAnswers.size)
+                        orderedAnswers.add(correctAnswerPosition, callbackData.first)
+                    }.toList()
+                    val sentMessage = sendTextMessage(
+                        chat,
+                        buildEntities {
+                            +user.mention(user.firstName)
+                            regular(", $captchaText ")
+                            bold(callbackData.second)
+                        },
+                        replyMarkup = dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup(
+                            answers.map {
+                                CallbackDataInlineKeyboardButton(it.toString(), it.toString())
+                            }.chunked(3)
                         )
-                        val correctAnswer = callbackData.first.toString()
-                        val answers = (0 until answers - 1).map {
-                            ExpressionBuilder.generateResult(maxPerNumber, operations)
-                        }.toMutableList().also { orderedAnswers ->
-                            val correctAnswerPosition = Random.nextInt(orderedAnswers.size)
-                            orderedAnswers.add(correctAnswerPosition, callbackData.first)
-                        }.toList()
-                        val sentMessage = sendTextMessage(
-                            chat,
-                            buildEntities {
-                                +user.mention(user.firstName)
-                                regular(", $captchaText ")
-                                bold(callbackData.second)
-                            },
-                            replyMarkup = dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup(
-                                answers.map {
-                                    CallbackDataInlineKeyboardButton(it.toString(), it.toString())
-                                }.chunked(3)
-                            )
-                        )
+                    )
 
-                        suspend fun removeRedundantMessages() {
-                            safelyWithoutExceptions {
-                                deleteMessage(sentMessage)
-                            }
+                    suspend fun removeRedundantMessages() {
+                        safelyWithoutExceptions {
+                            deleteMessage(sentMessage)
                         }
+                    }
 
-                        var passed = true
-                        val callback: suspend (Boolean) -> Unit = {
-                            removeRedundantMessages()
-                            passed = it
-                            if (it) {
-                                safelyWithoutExceptions { restrictChatMember(chat, user, permissions = LeftRestrictionsChatPermissions) }
-                            } else {
-                                if (kick) {
-                                    safelyWithoutExceptions { kickChatMember(chat, user) }
-                                }
-                            }
-                        }
-
-                        val job = parallel {
-                            var leftAttempts = attempts
-                            waitDataCallbackQuery {
-                                when {
-                                    this.user.id != user.id -> null
-                                    this.data != correctAnswer -> {
-                                        leftAttempts--
-                                        if (leftAttempts < 1) {
-                                            this
-                                        } else {
-                                            launch { answerCallbackQuery(this@waitDataCallbackQuery, leftRetriesText + leftAttempts) }
-                                            null
-                                        }
+                    var passed: Boolean? = null
+                    val passedMutex = Mutex()
+                    val callback: suspend (Boolean) -> Unit = {
+                        passedMutex.withLock {
+                            if (passed == null) {
+                                removeRedundantMessages()
+                                passed = it
+                                if (it) {
+                                    safelyWithoutExceptions { restrictChatMember(chat, user, permissions = LeftRestrictionsChatPermissions) }
+                                } else {
+                                    if (kick) {
+                                        safelyWithoutExceptions { kickChatMember(chat, user) }
                                     }
-                                    else -> this
                                 }
-                            }.first()
-
-                            callback(leftAttempts > 0)
+                            }
                         }
+                    }
 
+                    val banJob = launch {
                         delay((userBanDateTime - eventDateTime).millisecondsLong)
 
-                        if (job.isActive) job.cancel()
-                        callback(passed)
+                        if (passed == null) {
+                            callback(false)
+                            stop()
+                        }
                     }
+
+                    var leftAttempts = attempts
+                    waitDataCallbackQuery {
+                        when {
+                            this.user.id != user.id -> null
+                            this.data != correctAnswer -> {
+                                leftAttempts--
+                                if (leftAttempts < 1) {
+                                    this
+                                } else {
+                                    answerCallbackQuery(this@waitDataCallbackQuery, leftRetriesText + leftAttempts)
+                                    null
+                                }
+                            }
+                            else -> this
+                        }
+                    }.first()
+
+                    banJob.cancel()
+
+                    callback(leftAttempts > 0)
                 }
             }
         }.joinAll()
