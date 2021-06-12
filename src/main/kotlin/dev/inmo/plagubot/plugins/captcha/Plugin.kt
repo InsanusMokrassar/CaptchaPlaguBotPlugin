@@ -2,6 +2,9 @@ package dev.inmo.plagubot.plugins.captcha
 
 import dev.inmo.micro_utils.coroutines.*
 import dev.inmo.micro_utils.repos.create
+import dev.inmo.micro_utils.repos.exposed.keyvalue.ExposedKeyValueRepo
+import dev.inmo.micro_utils.repos.versions.KeyValueBasedVersionsRepoProxy
+import dev.inmo.micro_utils.repos.versions.StandardVersionsRepo
 import dev.inmo.plagubot.Plugin
 import dev.inmo.plagubot.plugins.captcha.db.CaptchaChatsSettingsRepo
 import dev.inmo.plagubot.plugins.captcha.provider.*

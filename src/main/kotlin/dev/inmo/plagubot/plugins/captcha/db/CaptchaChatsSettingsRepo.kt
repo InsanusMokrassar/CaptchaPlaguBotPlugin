@@ -1,15 +1,19 @@
 package dev.inmo.plagubot.plugins.captcha.db
 
+import dev.inmo.micro_utils.coroutines.launchSynchronously
 import dev.inmo.micro_utils.repos.exposed.*
+import dev.inmo.micro_utils.repos.versions.VersionsRepo
 import dev.inmo.plagubot.plugins.captcha.provider.CaptchaProvider
 import dev.inmo.plagubot.plugins.captcha.provider.SimpleCaptchaProvider
 import dev.inmo.plagubot.plugins.captcha.settings.*
 import dev.inmo.tgbotapi.types.ChatId
 import dev.inmo.tgbotapi.types.toChatId
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.statements.InsertStatement
 import org.jetbrains.exposed.sql.statements.UpdateStatement
+import org.jetbrains.exposed.sql.transactions.transaction
 
 private val captchaProviderSerialFormat = Json {
     ignoreUnknownKeys = true
@@ -33,8 +37,6 @@ class CaptchaChatsSettingsRepo(
     override val selectByIds: SqlExpressionBuilder.(List<ChatId>) -> Op<Boolean> = {
         chatIdColumn.inList(it.map { it.chatId })
     }
-    override val InsertStatement<Number>.asObject: ChatSettings
-        get() = TODO("Not yet implemented")
 
     override fun insert(value: ChatSettings, it: InsertStatement<Number>) {
         it[chatIdColumn] = value.chatId.chatId
