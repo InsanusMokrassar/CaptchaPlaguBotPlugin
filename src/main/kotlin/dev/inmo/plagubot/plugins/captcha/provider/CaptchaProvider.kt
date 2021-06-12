@@ -49,7 +49,8 @@ sealed class CaptchaProvider {
 @Serializable
 data class SlotMachineCaptchaProvider(
     val checkTimeSeconds: Seconds = 300,
-    val captchaText: String = "solve this captcha: "
+    val captchaText: String = "solve this captcha: ",
+    val kick: Boolean = true
 ) : CaptchaProvider() {
     @Transient
     private val checkTimeSpan = checkTimeSeconds.seconds
@@ -119,7 +120,12 @@ data class SlotMachineCaptchaProvider(
         subContexts.forEach { (context, user) ->
             if (user !in authorizedUsers) {
                 context.stop()
-                safelyWithoutExceptions { kickChatMember(chat, user) }
+                if (kick) {
+                    safelyWithoutExceptions {
+                        restrictChatMember(chat, user, permissions = LeftRestrictionsChatPermissions)
+                        kickChatMember(chat, user)
+                    }
+                }
             }
         }
         messagesToDelete.close()
@@ -186,7 +192,10 @@ data class SimpleCaptchaProvider(
                         if (job.isActive) {
                             job.cancel()
                             if (kick) {
-                                safelyWithoutExceptions { kickChatMember(chat, it) }
+                                safelyWithoutExceptions {
+                                    restrictChatMember(chat, it, permissions = LeftRestrictionsChatPermissions)
+                                    kickChatMember(chat, it)
+                                }
                             }
                         }
                         stop()
@@ -257,7 +266,7 @@ data class ExpressionCaptchaProvider(
         newUsers: List<User>
     ) {
         val userBanDateTime = eventDateTime + checkTimeSpan
-        newUsers.mapNotNull { user ->
+        newUsers.map { user ->
             launch {
                 doInSubContext {
                     val callbackData = ExpressionBuilder.createExpression(
@@ -302,7 +311,10 @@ data class ExpressionCaptchaProvider(
                                     safelyWithoutExceptions { restrictChatMember(chat, user, permissions = LeftRestrictionsChatPermissions) }
                                 } else {
                                     if (kick) {
-                                        safelyWithoutExceptions { kickChatMember(chat, user) }
+                                        safelyWithoutExceptions {
+                                            restrictChatMember(chat, user, permissions = LeftRestrictionsChatPermissions)
+                                            kickChatMember(chat, user)
+                                        }
                                     }
                                 }
                             }

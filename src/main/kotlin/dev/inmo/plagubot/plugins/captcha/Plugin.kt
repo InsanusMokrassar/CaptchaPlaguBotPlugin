@@ -95,20 +95,22 @@ class CaptchaBotPlugin : Plugin {
             },
             includeFilterByChatInBehaviourSubContext = false
         ) {
-            safelyWithoutExceptions { deleteMessage(it) }
-            val chat = it.chat.requireGroupChat()
-            val newUsers = it.chatEvent.members
-            newUsers.forEach { user ->
-                restrictChatMember(
-                    chat,
-                    user,
-                    permissions = ChatPermissions()
-                )
-            }
-            val settings = it.chat.settings()
-            doInSubContext(stopOnCompletion = false) {
-                launch {
-                    settings.captchaProvider.apply { doAction(it.date, chat, newUsers) }
+            launchSafelyWithoutExceptions {
+                safelyWithoutExceptions { deleteMessage(it) }
+                val chat = it.chat.requireGroupChat()
+                val newUsers = it.chatEvent.members
+                newUsers.forEach { user ->
+                    restrictChatMember(
+                        chat,
+                        user,
+                        permissions = ChatPermissions()
+                    )
+                }
+                val settings = it.chat.settings()
+                doInSubContext(stopOnCompletion = false) {
+                    launch {
+                        settings.captchaProvider.apply { doAction(it.date, chat, newUsers) }
+                    }
                 }
             }
         }
