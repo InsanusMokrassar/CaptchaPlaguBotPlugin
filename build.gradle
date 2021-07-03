@@ -32,6 +32,14 @@ repositories {
                 password = project.hasProperty("GITHUB_TOKEN") ? project.getProperty("GITHUB_TOKEN") : System.getenv("GITHUB_TOKEN")
             }
         }
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/InsanusMokrassar/MicroUtils")
+            credentials {
+                username = project.hasProperty("GITHUB_USER") ? project.getProperty("GITHUB_USER") : System.getenv("GITHUB_USER")
+                password = project.hasProperty("GITHUB_TOKEN") ? project.getProperty("GITHUB_TOKEN") : System.getenv("GITHUB_TOKEN")
+            }
+        }
     }
 }
 

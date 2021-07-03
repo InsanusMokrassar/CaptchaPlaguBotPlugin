@@ -2,17 +2,20 @@ package dev.inmo.plagubot.plugins.captcha
 
 import dev.inmo.micro_utils.coroutines.*
 import dev.inmo.micro_utils.repos.create
+import dev.inmo.micro_utils.repos.exposed.keyvalue.ExposedKeyValueRepo
+import dev.inmo.micro_utils.repos.versions.KeyValueBasedVersionsRepoProxy
+import dev.inmo.micro_utils.repos.versions.StandardVersionsRepo
 import dev.inmo.plagubot.Plugin
 import dev.inmo.plagubot.plugins.captcha.db.CaptchaChatsSettingsRepo
+import dev.inmo.plagubot.plugins.captcha.provider.*
 import dev.inmo.plagubot.plugins.captcha.settings.ChatSettings
 import dev.inmo.tgbotapi.bot.TelegramBot
 import dev.inmo.tgbotapi.extensions.api.answers.answerCallbackQuery
 import dev.inmo.tgbotapi.extensions.api.chat.members.*
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
 import dev.inmo.tgbotapi.extensions.api.edit.ReplyMarkup.editMessageReplyMarkup
+import dev.inmo.tgbotapi.extensions.api.send.*
 import dev.inmo.tgbotapi.extensions.api.send.media.reply
-import dev.inmo.tgbotapi.extensions.api.send.sendDice
-import dev.inmo.tgbotapi.extensions.api.send.sendTextMessage
 import dev.inmo.tgbotapi.extensions.behaviour_builder.*
 import dev.inmo.tgbotapi.extensions.behaviour_builder.expectations.waitBaseInlineQuery
 import dev.inmo.tgbotapi.extensions.behaviour_builder.expectations.waitDataCallbackQuery
@@ -20,6 +23,7 @@ import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onComman
 import dev.inmo.tgbotapi.updateshandlers.FlowsUpdatesFilter
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onNewChatMembers
 import dev.inmo.tgbotapi.extensions.utils.*
+import dev.inmo.tgbotapi.extensions.utils.extensions.parseCommandsWithParams
 import dev.inmo.tgbotapi.extensions.utils.formatting.buildEntities
 import dev.inmo.tgbotapi.extensions.utils.formatting.regular
 import dev.inmo.tgbotapi.extensions.utils.shortcuts.executeUnsafe
@@ -44,6 +48,14 @@ import org.jetbrains.exposed.sql.Database
 private const val enableAutoDeleteCommands = "captcha_auto_delete_commands_on"
 private const val disableAutoDeleteCommands = "captcha_auto_delete_commands_off"
 
+private const val enableSlotMachineCaptcha = "captcha_use_slot_machine"
+private const val enableSimpleCaptcha = "captcha_use_simple"
+private const val enableExpressionCaptcha = "captcha_use_expression"
+
+private val changeCaptchaMethodCommandRegex = Regex(
+    "captcha_use_((slot_machine)|(simple)|(expression))"
+)
+
 @Serializable
 class CaptchaBotPlugin : Plugin {
     override suspend fun getCommands(): List<BotCommand> = listOf(
@@ -54,6 +66,18 @@ class CaptchaBotPlugin : Plugin {
         BotCommand(
             disableAutoDeleteCommands,
             "Disable auto removing of commands addressed to captcha plugin"
+        ),
+        BotCommand(
+            enableSlotMachineCaptcha,
+            "Change captcha method to slot machine"
+        ),
+        BotCommand(
+            enableSimpleCaptcha,
+            "Change captcha method to simple button"
+        ),
+        BotCommand(
+            enableExpressionCaptcha,
+            "Change captcha method to expressions"
         )
     )
 
@@ -71,88 +95,60 @@ class CaptchaBotPlugin : Plugin {
             },
             includeFilterByChatInBehaviourSubContext = false
         ) {
-            safelyWithoutExceptions { deleteMessage(it) }
-            val eventDateTime = it.date
-            val chat = it.chat.requirePublicChat()
-            val newUsers = it.chatEvent.members
-            newUsers.forEach { user ->
-                restrictChatMember(
-                    chat,
-                    user,
-                    permissions = ChatPermissions()
-                )
-            }
-            val settings = it.chat.settings() ?: return@onNewChatMembers
-            val userBanDateTime = eventDateTime + settings.checkTimeSpan
-            val authorized = Channel<User>(newUsers.size)
-            val messagesToDelete = Channel<Message>(Channel.UNLIMITED)
-            val subContexts = newUsers.map {
-                doInSubContext(stopOnCompletion = false) {
-                    val sentMessage = sendTextMessage(
+            launchSafelyWithoutExceptions {
+                safelyWithoutExceptions { deleteMessage(it) }
+                val chat = it.chat.requireGroupChat()
+                val newUsers = it.chatEvent.members
+                newUsers.forEach { user ->
+                    restrictChatMember(
                         chat,
-                        buildEntities {
-                            +it.mention(it.firstName)
-                            regular(", ${settings.captchaText}")
-                        }
-                    ).also { messagesToDelete.send(it) }
-                    val sentDice = sendDice(
-                        sentMessage.chat,
-                        SlotMachineDiceAnimationType,
-                        replyToMessageId = sentMessage.messageId,
-                        replyMarkup = slotMachineReplyMarkup()
-                    ).also { messagesToDelete.send(it) }
-                    val reels = sentDice.content.dice.calculateSlotMachineResult()!!
-                    val leftToClick = mutableListOf(
-                        reels.left.asSlotMachineReelImage.text,
-                        reels.center.asSlotMachineReelImage.text,
-                        reels.right.asSlotMachineReelImage.text
+                        user,
+                        permissions = ChatPermissions()
                     )
-
+                }
+                val settings = it.chat.settings()
+                doInSubContext(stopOnCompletion = false) {
                     launch {
-                        val clicked = arrayOf<String?>(null, null, null)
-                        while (leftToClick.isNotEmpty()) {
-                            val userClicked = waitDataCallbackQuery { if (user.id == it.id) this else null }.first()
-                            if (userClicked.data == leftToClick.first()) {
-                                clicked[3 - leftToClick.size] = leftToClick.removeAt(0)
-                                if (clicked.contains(null)) {
-                                    safelyWithoutExceptions { answerCallbackQuery(userClicked, "Ok, next one") }
-                                    editMessageReplyMarkup(sentDice, slotMachineReplyMarkup(clicked[0], clicked[1], clicked[2]))
-                                } else {
-                                    safelyWithoutExceptions { answerCallbackQuery(userClicked, "Thank you and welcome", showAlert = true) }
-                                    safelyWithoutExceptions { deleteMessage(sentMessage) }
-                                    safelyWithoutExceptions { deleteMessage(sentDice) }
-                                }
-                            } else {
-                                safelyWithoutExceptions { answerCallbackQuery(userClicked, "Nope") }
-                            }
-                        }
-                        authorized.send(it)
-                        safelyWithoutExceptions { restrictChatMember(chat, it, permissions = LeftRestrictionsChatPermissions) }
-                        stop()
+                        settings.captchaProvider.apply { doAction(it.date, chat, newUsers) }
                     }
-
-                    this to it
                 }
-            }
-
-            delay((userBanDateTime - eventDateTime).millisecondsLong)
-
-            authorized.close()
-            val authorizedUsers = authorized.toList()
-
-            subContexts.forEach { (context, user) ->
-                if (user !in authorizedUsers) {
-                    context.stop()
-                    safelyWithoutExceptions { kickChatMember(chat, user) }
-                }
-            }
-            messagesToDelete.close()
-            for (message in messagesToDelete) {
-                executeUnsafe(DeleteMessage(message.chat.id, message.messageId), retries = 0)
             }
         }
 
         if (adminsAPI != null) {
+            onCommand(changeCaptchaMethodCommandRegex) {
+                if (adminsAPI.sentByAdmin(it) != true) {
+                    return@onCommand
+                }
+
+                val settings = it.chat.settings()
+                if (settings.autoRemoveCommands) {
+                    safelyWithoutExceptions { deleteMessage(it) }
+                }
+                val commands = it.parseCommandsWithParams()
+                val changeCommand = commands.keys.first {
+                    println(it)
+                    changeCaptchaMethodCommandRegex.matches(it)
+                }
+                println(changeCommand)
+                val captcha = when {
+                    changeCommand.startsWith(enableSimpleCaptcha) -> SimpleCaptchaProvider()
+                    changeCommand.startsWith(enableExpressionCaptcha) -> ExpressionCaptchaProvider()
+                    changeCommand.startsWith(enableSlotMachineCaptcha) -> SlotMachineCaptchaProvider()
+                    else -> return@onCommand
+                }
+                val newSettings = settings.copy(captchaProvider = captcha)
+                if (repo.contains(it.chat.id)) {
+                    repo.update(it.chat.id, newSettings)
+                } else {
+                    repo.create(newSettings)
+                }
+                sendMessage(it.chat, "Settings updated").also { sent ->
+                    delay(5000L)
+                    deleteMessage(sent)
+                }
+            }
+
             onCommand(
                 enableAutoDeleteCommands,
                 requireOnlyCommandInMessage = false
