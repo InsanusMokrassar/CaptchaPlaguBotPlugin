@@ -15,7 +15,6 @@ import dev.inmo.tgbotapi.extensions.api.chat.members.*
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
 import dev.inmo.tgbotapi.extensions.api.edit.ReplyMarkup.editMessageReplyMarkup
 import dev.inmo.tgbotapi.extensions.api.send.*
-import dev.inmo.tgbotapi.extensions.api.send.media.reply
 import dev.inmo.tgbotapi.extensions.behaviour_builder.*
 import dev.inmo.tgbotapi.extensions.behaviour_builder.expectations.waitBaseInlineQuery
 import dev.inmo.tgbotapi.extensions.behaviour_builder.expectations.waitDataCallbackQuery
@@ -24,6 +23,7 @@ import dev.inmo.tgbotapi.updateshandlers.FlowsUpdatesFilter
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onNewChatMembers
 import dev.inmo.tgbotapi.extensions.utils.*
 import dev.inmo.tgbotapi.extensions.utils.extensions.parseCommandsWithParams
+import dev.inmo.tgbotapi.extensions.utils.extensions.sourceChat
 import dev.inmo.tgbotapi.extensions.utils.formatting.buildEntities
 import dev.inmo.tgbotapi.extensions.utils.formatting.regular
 import dev.inmo.tgbotapi.extensions.utils.shortcuts.executeUnsafe
@@ -90,10 +90,10 @@ class CaptchaBotPlugin : Plugin {
         suspend fun Chat.settings() = repo.getById(id) ?: repo.create(ChatSettings(id)).first()
 
         onNewChatMembers(
-            additionalFilter = {
+            initialFilter = {
                 it.chat.asPublicChat() != null
             },
-            includeFilterByChatInBehaviourSubContext = false
+            subcontextUpdatesFilter = { m, u -> u.sourceChat() == m.chat },
         ) {
             launchSafelyWithoutExceptions {
                 safelyWithoutExceptions { deleteMessage(it) }

@@ -3,11 +3,12 @@ package dev.inmo.plagubot.plugins.captcha.provider
 import com.benasher44.uuid.uuid4
 import com.soywiz.klock.DateTime
 import com.soywiz.klock.seconds
+import dev.inmo.micro_utils.common.joinTo
+import dev.inmo.micro_utils.coroutines.safelyWithResult
 import dev.inmo.micro_utils.coroutines.safelyWithoutExceptions
 import dev.inmo.plagubot.plugins.captcha.slotMachineReplyMarkup
 import dev.inmo.tgbotapi.extensions.api.answers.answerCallbackQuery
-import dev.inmo.tgbotapi.extensions.api.chat.members.kickChatMember
-import dev.inmo.tgbotapi.extensions.api.chat.members.restrictChatMember
+import dev.inmo.tgbotapi.extensions.api.chat.members.*
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
 import dev.inmo.tgbotapi.extensions.api.edit.ReplyMarkup.editMessageReplyMarkup
 import dev.inmo.tgbotapi.extensions.api.send.sendDice
@@ -20,12 +21,12 @@ import dev.inmo.tgbotapi.extensions.utils.formatting.*
 import dev.inmo.tgbotapi.extensions.utils.shortcuts.executeUnsafe
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.InlineKeyboardMarkup
 import dev.inmo.tgbotapi.requests.DeleteMessage
+import dev.inmo.tgbotapi.types.*
 import dev.inmo.tgbotapi.types.MessageEntity.textsources.mention
-import dev.inmo.tgbotapi.types.Seconds
-import dev.inmo.tgbotapi.types.User
+import dev.inmo.tgbotapi.types.MessageEntity.textsources.plus
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardButtons.CallbackDataInlineKeyboardButton
 import dev.inmo.tgbotapi.types.chat.LeftRestrictionsChatPermissions
-import dev.inmo.tgbotapi.types.chat.abstracts.GroupChat
+import dev.inmo.tgbotapi.types.chat.abstracts.*
 import dev.inmo.tgbotapi.types.dice.SlotMachineDiceAnimationType
 import dev.inmo.tgbotapi.types.message.abstracts.Message
 import kotlinx.coroutines.*
@@ -44,6 +45,33 @@ sealed class CaptchaProvider {
         chat: GroupChat,
         newUsers: List<User>
     )
+}
+
+private suspend fun BehaviourContext.banUser(
+    chat: PublicChat,
+    user: User,
+    onFailure: suspend BehaviourContext.(Throwable) -> Unit = {
+        safelyWithResult {
+            sendTextMessage(
+                chat,
+                buildEntities(" ") {
+                    user.mention(
+                        listOfNotNull(
+                            user.lastName.takeIf { it.isNotBlank() }, user.firstName.takeIf { it.isNotBlank() }
+                        ).takeIf {
+                            it.isNotEmpty()
+                        } ?.joinToString(" ") ?: "User"
+                    )
+                    +"failed captcha"
+                }
+            )
+        }
+    }
+): Result<Boolean> = safelyWithResult {
+    restrictChatMember(chat, user, permissions = LeftRestrictionsChatPermissions)
+    banChatMember(chat, user)
+}.onFailure {
+    onFailure(it)
 }
 
 @Serializable
@@ -121,10 +149,7 @@ data class SlotMachineCaptchaProvider(
             if (user !in authorizedUsers) {
                 context.stop()
                 if (kick) {
-                    safelyWithoutExceptions {
-                        restrictChatMember(chat, user, permissions = LeftRestrictionsChatPermissions)
-                        kickChatMember(chat, user)
-                    }
+                    banUser(chat, user)
                 }
             }
         }
@@ -192,10 +217,7 @@ data class SimpleCaptchaProvider(
                         if (job.isActive) {
                             job.cancel()
                             if (kick) {
-                                safelyWithoutExceptions {
-                                    restrictChatMember(chat, it, permissions = LeftRestrictionsChatPermissions)
-                                    kickChatMember(chat, it)
-                                }
+                                banUser(chat, it)
                             }
                         }
                         stop()
@@ -249,7 +271,7 @@ private object ExpressionBuilder {
 @Serializable
 data class ExpressionCaptchaProvider(
     val checkTimeSeconds: Seconds = 60,
-    val captchaText: String = "solve next captcha:",
+    val captchaText: String = "Solve next captcha:",
     val leftRetriesText: String = "Nope, left retries: ",
     val maxPerNumber: Int = 10,
     val operations: Int = 2,
@@ -311,10 +333,7 @@ data class ExpressionCaptchaProvider(
                                     safelyWithoutExceptions { restrictChatMember(chat, user, permissions = LeftRestrictionsChatPermissions) }
                                 } else {
                                     if (kick) {
-                                        safelyWithoutExceptions {
-                                            restrictChatMember(chat, user, permissions = LeftRestrictionsChatPermissions)
-                                            kickChatMember(chat, user)
-                                        }
+                                        banUser(chat, user)
                                     }
                                 }
                             }
