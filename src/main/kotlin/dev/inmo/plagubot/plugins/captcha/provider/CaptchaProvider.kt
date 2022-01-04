@@ -3,7 +3,6 @@ package dev.inmo.plagubot.plugins.captcha.provider
 import com.benasher44.uuid.uuid4
 import com.soywiz.klock.DateTime
 import com.soywiz.klock.seconds
-import dev.inmo.micro_utils.common.joinTo
 import dev.inmo.micro_utils.coroutines.safelyWithResult
 import dev.inmo.micro_utils.coroutines.safelyWithoutExceptions
 import dev.inmo.plagubot.plugins.captcha.slotMachineReplyMarkup
@@ -23,8 +22,8 @@ import dev.inmo.tgbotapi.extensions.utils.types.buttons.InlineKeyboardMarkup
 import dev.inmo.tgbotapi.requests.DeleteMessage
 import dev.inmo.tgbotapi.types.*
 import dev.inmo.tgbotapi.types.MessageEntity.textsources.mention
-import dev.inmo.tgbotapi.types.MessageEntity.textsources.plus
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardButtons.CallbackDataInlineKeyboardButton
+import dev.inmo.tgbotapi.types.chat.ChatPermissions
 import dev.inmo.tgbotapi.types.chat.LeftRestrictionsChatPermissions
 import dev.inmo.tgbotapi.types.chat.abstracts.*
 import dev.inmo.tgbotapi.types.dice.SlotMachineDiceAnimationType
@@ -43,13 +42,15 @@ sealed class CaptchaProvider {
     abstract suspend fun BehaviourContext.doAction(
         eventDateTime: DateTime,
         chat: GroupChat,
-        newUsers: List<User>
+        newUsers: List<User>,
+        leftRestrictionsPermissions: ChatPermissions
     )
 }
 
 private suspend fun BehaviourContext.banUser(
     chat: PublicChat,
     user: User,
+    leftRestrictionsPermissions: ChatPermissions,
     onFailure: suspend BehaviourContext.(Throwable) -> Unit = {
         safelyWithResult {
             sendTextMessage(
@@ -68,7 +69,7 @@ private suspend fun BehaviourContext.banUser(
         }
     }
 ): Result<Boolean> = safelyWithResult {
-    restrictChatMember(chat, user, permissions = LeftRestrictionsChatPermissions)
+    restrictChatMember(chat, user, permissions = leftRestrictionsPermissions)
     banChatMember(chat, user)
 }.onFailure {
     onFailure(it)
@@ -86,7 +87,8 @@ data class SlotMachineCaptchaProvider(
     override suspend fun BehaviourContext.doAction(
         eventDateTime: DateTime,
         chat: GroupChat,
-        newUsers: List<User>
+        newUsers: List<User>,
+        leftRestrictionsPermissions: ChatPermissions
     ) {
         val userBanDateTime = eventDateTime + checkTimeSpan
         val authorized = Channel<User>(newUsers.size)
@@ -132,7 +134,7 @@ data class SlotMachineCaptchaProvider(
                         }
                     }
                     authorized.send(it)
-                    safelyWithoutExceptions { restrictChatMember(chat, it, permissions = LeftRestrictionsChatPermissions) }
+                    safelyWithoutExceptions { restrictChatMember(chat, it, permissions = leftRestrictionsPermissions) }
                     stop()
                 }
 
@@ -149,7 +151,7 @@ data class SlotMachineCaptchaProvider(
             if (user !in authorizedUsers) {
                 context.stop()
                 if (kick) {
-                    banUser(chat, user)
+                    banUser(chat, user, leftRestrictionsPermissions)
                 }
             }
         }
@@ -173,7 +175,8 @@ data class SimpleCaptchaProvider(
     override suspend fun BehaviourContext.doAction(
         eventDateTime: DateTime,
         chat: GroupChat,
-        newUsers: List<User>
+        newUsers: List<User>,
+        leftRestrictionsPermissions: ChatPermissions
     ) {
         val userBanDateTime = eventDateTime + checkTimeSpan
         newUsers.mapNotNull {
@@ -208,7 +211,7 @@ data class SimpleCaptchaProvider(
                             }.first()
 
                             removeRedundantMessages()
-                            safelyWithoutExceptions { restrictChatMember(chat, it, permissions = LeftRestrictionsChatPermissions) }
+                            safelyWithoutExceptions { restrictChatMember(chat, it, permissions = leftRestrictionsPermissions) }
                             stop()
                         }
 
@@ -217,7 +220,7 @@ data class SimpleCaptchaProvider(
                         if (job.isActive) {
                             job.cancel()
                             if (kick) {
-                                banUser(chat, it)
+                                banUser(chat, it, leftRestrictionsPermissions)
                             }
                         }
                         stop()
@@ -285,7 +288,8 @@ data class ExpressionCaptchaProvider(
     override suspend fun BehaviourContext.doAction(
         eventDateTime: DateTime,
         chat: GroupChat,
-        newUsers: List<User>
+        newUsers: List<User>,
+        leftRestrictionsPermissions: ChatPermissions
     ) {
         val userBanDateTime = eventDateTime + checkTimeSpan
         newUsers.map { user ->
@@ -330,10 +334,10 @@ data class ExpressionCaptchaProvider(
                                 removeRedundantMessages()
                                 passed = it
                                 if (it) {
-                                    safelyWithoutExceptions { restrictChatMember(chat, user, permissions = LeftRestrictionsChatPermissions) }
+                                    safelyWithoutExceptions { restrictChatMember(chat, user, permissions = leftRestrictionsPermissions) }
                                 } else {
                                     if (kick) {
-                                        banUser(chat, user)
+                                        banUser(chat, user, leftRestrictionsPermissions)
                                     }
                                 }
                             }

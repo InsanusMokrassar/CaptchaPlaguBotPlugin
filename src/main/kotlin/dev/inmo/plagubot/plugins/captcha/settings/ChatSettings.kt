@@ -9,5 +9,7 @@ import kotlinx.serialization.Serializable
 data class ChatSettings(
     val chatId: ChatId,
     val captchaProvider: CaptchaProvider = SimpleCaptchaProvider(),
-    val autoRemoveCommands: Boolean = false
+    val autoRemoveCommands: Boolean = false,
+    val autoRemoveEvents: Boolean = true,
+    val enabled: Boolean = true
 )
