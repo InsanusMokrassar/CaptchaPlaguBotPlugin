@@ -162,7 +162,10 @@ class CaptchaBotPlugin : Plugin {
                     }
                     sendMessage(it.chat, "Settings updated").also { sent ->
                         delay(5000L)
-                        deleteMessage(sent)
+
+                        if (settings.autoRemoveCommands) {
+                            deleteMessage(sent)
+                        }
                     }
                 }
             }
@@ -205,6 +208,8 @@ class CaptchaBotPlugin : Plugin {
                         settings.copy(enabled = false)
                     )
 
+                    reply(message, "Captcha has been disabled")
+
                     if (settings.autoRemoveCommands) {
                         deleteMessage(message)
                     }
@@ -219,6 +224,8 @@ class CaptchaBotPlugin : Plugin {
                         message.chat.id,
                         settings.copy(enabled = true)
                     )
+
+                    reply(message, "Captcha has been enabled")
 
                     if (settings.autoRemoveCommands) {
                         deleteMessage(message)
@@ -235,6 +242,8 @@ class CaptchaBotPlugin : Plugin {
                         settings.copy(autoRemoveEvents = true)
                     )
 
+                    reply(message, "Ok, user joined service messages will be deleted")
+
                     if (settings.autoRemoveCommands) {
                         deleteMessage(message)
                     }
@@ -249,6 +258,8 @@ class CaptchaBotPlugin : Plugin {
                         message.chat.id,
                         settings.copy(autoRemoveEvents = false)
                     )
+
+                    reply(message, "Ok, user joined service messages will not be deleted")
 
                     if (settings.autoRemoveCommands) {
                         deleteMessage(message)
