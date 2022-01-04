@@ -31,8 +31,8 @@ class CaptchaChatsSettingsRepo(
         default(defaultCaptchaProviderValue)
     }
     private val autoRemoveCommandsColumn = bool("autoRemoveCommands")
-    private val autoRemoveEventsColumn = bool("autoRemoveEvents")
-    private val enabledColumn = bool("enabled")
+    private val autoRemoveEventsColumn = bool("autoRemoveEvents").apply { default(true) }
+    private val enabledColumn = bool("enabled").default(true)
 
     override val primaryKey = PrimaryKey(chatIdColumn)
 
