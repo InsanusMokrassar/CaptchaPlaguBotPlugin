@@ -31,6 +31,8 @@ class CaptchaChatsSettingsRepo(
         default(defaultCaptchaProviderValue)
     }
     private val autoRemoveCommandsColumn = bool("autoRemoveCommands")
+    private val autoRemoveEventsColumn = bool("autoRemoveEvents")
+    private val enabledColumn = bool("enabled")
 
     override val primaryKey = PrimaryKey(chatIdColumn)
 
@@ -42,27 +44,35 @@ class CaptchaChatsSettingsRepo(
         it[chatIdColumn] = value.chatId.chatId
         it[captchaProviderColumn] = captchaProviderSerialFormat.encodeToString(CaptchaProvider.serializer(), value.captchaProvider)
         it[autoRemoveCommandsColumn] = value.autoRemoveCommands
+        it[autoRemoveEventsColumn] = value.autoRemoveEvents
+        it[enabledColumn] = value.enabled
     }
 
     override fun update(id: ChatId, value: ChatSettings, it: UpdateStatement) {
         if (id.chatId == value.chatId.chatId) {
             it[captchaProviderColumn] = captchaProviderSerialFormat.encodeToString(CaptchaProvider.serializer(), value.captchaProvider)
             it[autoRemoveCommandsColumn] = value.autoRemoveCommands
+            it[autoRemoveEventsColumn] = value.autoRemoveEvents
+            it[enabledColumn] = value.enabled
         }
     }
 
     override fun InsertStatement<Number>.asObject(value: ChatSettings): ChatSettings = ChatSettings(
-        get(chatIdColumn).toChatId(),
-        captchaProviderSerialFormat.decodeFromString(CaptchaProvider.serializer(), get(captchaProviderColumn)),
-        get(autoRemoveCommandsColumn)
+        chatId = get(chatIdColumn).toChatId(),
+        captchaProvider = captchaProviderSerialFormat.decodeFromString(CaptchaProvider.serializer(), get(captchaProviderColumn)),
+        autoRemoveCommands = get(autoRemoveCommandsColumn),
+        autoRemoveEvents = get(autoRemoveEventsColumn),
+        enabled = get(enabledColumn)
     )
 
     override val selectById: SqlExpressionBuilder.(ChatId) -> Op<Boolean> = { chatIdColumn.eq(it.chatId) }
     override val ResultRow.asObject: ChatSettings
         get() = ChatSettings(
-            get(chatIdColumn).toChatId(),
-            captchaProviderSerialFormat.decodeFromString(CaptchaProvider.serializer(), get(captchaProviderColumn)),
-            get(autoRemoveCommandsColumn)
+            chatId = get(chatIdColumn).toChatId(),
+            captchaProvider = captchaProviderSerialFormat.decodeFromString(CaptchaProvider.serializer(), get(captchaProviderColumn)),
+            autoRemoveCommands = get(autoRemoveCommandsColumn),
+            autoRemoveEvents = get(autoRemoveEventsColumn),
+            enabled = get(enabledColumn)
         )
 
     init {
