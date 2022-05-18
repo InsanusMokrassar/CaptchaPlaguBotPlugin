@@ -18,15 +18,13 @@ import dev.inmo.tgbotapi.extensions.utils.extensions.parseCommandsWithParams
 import dev.inmo.tgbotapi.extensions.utils.extensions.sourceChat
 import dev.inmo.tgbotapi.libraries.cache.admins.*
 import dev.inmo.tgbotapi.types.BotCommand
-import dev.inmo.tgbotapi.types.chat.RestrictionsChatPermissions
-import dev.inmo.tgbotapi.types.chat.abstracts.extended.ExtendedGroupChat
+import dev.inmo.tgbotapi.types.chat.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import org.jetbrains.exposed.sql.Database
 import org.koin.core.Koin
 import org.koin.core.module.Module
-import dev.inmo.tgbotapi.types.chat.Chat
 
 private const val enableAutoDeleteCommands = "captcha_auto_delete_commands_on"
 private const val disableAutoDeleteCommands = "captcha_auto_delete_commands_off"
@@ -132,7 +130,7 @@ class CaptchaBotPlugin : Plugin {
                 }
                 val defaultChatPermissions = (getChat(it.chat) as ExtendedGroupChat).permissions
 
-                doInSubContext(stopOnCompletion = false) {
+                createSubContextAndDoWithUpdatesFilter(stopOnCompletion = false) {
                     launch {
                         settings.captchaProvider.apply { doAction(it.date, chat, newUsers, defaultChatPermissions) }
                     }

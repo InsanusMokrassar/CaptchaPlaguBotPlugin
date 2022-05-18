@@ -21,13 +21,13 @@ import dev.inmo.tgbotapi.extensions.utils.shortcuts.executeUnsafe
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.InlineKeyboardMarkup
 import dev.inmo.tgbotapi.requests.DeleteMessage
 import dev.inmo.tgbotapi.types.*
-import dev.inmo.tgbotapi.types.MessageEntity.textsources.mention
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardButtons.CallbackDataInlineKeyboardButton
 import dev.inmo.tgbotapi.types.chat.ChatPermissions
-import dev.inmo.tgbotapi.types.chat.LeftRestrictionsChatPermissions
-import dev.inmo.tgbotapi.types.chat.abstracts.*
+import dev.inmo.tgbotapi.types.chat.*
+import dev.inmo.tgbotapi.types.chat.User
 import dev.inmo.tgbotapi.types.dice.SlotMachineDiceAnimationType
 import dev.inmo.tgbotapi.types.message.abstracts.Message
+import dev.inmo.tgbotapi.types.message.textsources.mention
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.toList
@@ -94,12 +94,12 @@ data class SlotMachineCaptchaProvider(
         val authorized = Channel<User>(newUsers.size)
         val messagesToDelete = Channel<Message>(Channel.UNLIMITED)
         val subContexts = newUsers.map {
-            doInSubContext(stopOnCompletion = false) {
+            createSubContextAndDoWithUpdatesFilter (stopOnCompletion = false) {
                 val sentMessage = sendTextMessage(
                     chat,
                     buildEntities {
                         +it.mention(it.firstName)
-                        regular(", ${captchaText}")
+                        regular(", $captchaText")
                     }
                 ).also { messagesToDelete.send(it) }
                 val sentDice = sendDice(
@@ -182,7 +182,7 @@ data class SimpleCaptchaProvider(
         newUsers.mapNotNull {
             safelyWithoutExceptions {
                 launch {
-                    doInSubContext(stopOnCompletion = false) {
+                    createSubContextAndDoWithUpdatesFilter(stopOnCompletion = false) {
                         val callbackData = uuid4().toString()
                         val sentMessage = sendTextMessage(
                             chat,
@@ -294,7 +294,7 @@ data class ExpressionCaptchaProvider(
         val userBanDateTime = eventDateTime + checkTimeSpan
         newUsers.map { user ->
             launch {
-                doInSubContext {
+                createSubContextAndDoWithUpdatesFilter {
                     val callbackData = ExpressionBuilder.createExpression(
                         maxPerNumber,
                         operations
