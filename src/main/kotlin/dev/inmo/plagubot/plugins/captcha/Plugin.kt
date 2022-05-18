@@ -19,11 +19,14 @@ import dev.inmo.tgbotapi.extensions.utils.extensions.sourceChat
 import dev.inmo.tgbotapi.libraries.cache.admins.*
 import dev.inmo.tgbotapi.types.BotCommand
 import dev.inmo.tgbotapi.types.chat.RestrictionsChatPermissions
-import dev.inmo.tgbotapi.types.chat.abstracts.Chat
 import dev.inmo.tgbotapi.types.chat.abstracts.extended.ExtendedGroupChat
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 import org.jetbrains.exposed.sql.Database
+import org.koin.core.Koin
+import org.koin.core.module.Module
+import dev.inmo.tgbotapi.types.chat.Chat
 
 private const val enableAutoDeleteCommands = "captcha_auto_delete_commands_on"
 private const val disableAutoDeleteCommands = "captcha_auto_delete_commands_off"
@@ -46,59 +49,61 @@ private val changeCaptchaMethodCommandRegex = Regex(
 
 @Serializable
 class CaptchaBotPlugin : Plugin {
-    override suspend fun getCommands(): List<BotCommand> = listOf(
-        BotCommand(
-            enableAutoDeleteCommands,
-            "Enable auto removing of commands addressed to captcha plugin"
-        ),
-        BotCommand(
-            disableAutoDeleteCommands,
-            "Disable auto removing of commands addressed to captcha plugin"
-        ),
-        BotCommand(
-            enableAutoDeleteServiceMessages,
-            "Enable auto removing of users joined messages"
-        ),
-        BotCommand(
-            disableAutoDeleteServiceMessages,
-            "Disable auto removing of users joined messages"
-        ),
-        BotCommand(
-            enableSlotMachineCaptcha,
-            "Change captcha method to slot machine"
-        ),
-        BotCommand(
-            enableSimpleCaptcha,
-            "Change captcha method to simple button"
-        ),
-        BotCommand(
-            disableCaptcha,
-            "Disable captcha for chat"
-        ),
-        BotCommand(
-            enableCaptcha,
-            "Enable captcha for chat"
-        ),
-        BotCommand(
-            enableExpressionCaptcha,
-            "Change captcha method to expressions"
-        ),
-        BotCommand(
-            enableKickOnUnsuccess,
-            "Not solved captcha users will be kicked from the chat"
-        ),
-        BotCommand(
-            disableKickOnUnsuccess,
-            "Not solved captcha users will NOT be kicked from the chat"
-        )
-    )
+//    override suspend fun getCommands(): List<BotCommand> = listOf(
+//        BotCommand(
+//            enableAutoDeleteCommands,
+//            "Enable auto removing of commands addressed to captcha plugin"
+//        ),
+//        BotCommand(
+//            disableAutoDeleteCommands,
+//            "Disable auto removing of commands addressed to captcha plugin"
+//        ),
+//        BotCommand(
+//            enableAutoDeleteServiceMessages,
+//            "Enable auto removing of users joined messages"
+//        ),
+//        BotCommand(
+//            disableAutoDeleteServiceMessages,
+//            "Disable auto removing of users joined messages"
+//        ),
+//        BotCommand(
+//            enableSlotMachineCaptcha,
+//            "Change captcha method to slot machine"
+//        ),
+//        BotCommand(
+//            enableSimpleCaptcha,
+//            "Change captcha method to simple button"
+//        ),
+//        BotCommand(
+//            disableCaptcha,
+//            "Disable captcha for chat"
+//        ),
+//        BotCommand(
+//            enableCaptcha,
+//            "Enable captcha for chat"
+//        ),
+//        BotCommand(
+//            enableExpressionCaptcha,
+//            "Change captcha method to expressions"
+//        ),
+//        BotCommand(
+//            enableKickOnUnsuccess,
+//            "Not solved captcha users will be kicked from the chat"
+//        ),
+//        BotCommand(
+//            disableKickOnUnsuccess,
+//            "Not solved captcha users will NOT be kicked from the chat"
+//        )
+//    )
 
-    override suspend fun BehaviourContext.invoke(
-        database: Database,
-        params: Map<String, Any>
-    ) {
-        val repo = CaptchaChatsSettingsRepo(database)
-        val adminsAPI = params.adminsPlugin ?.adminsAPI(database)
+    override fun Module.setupDI(database: Database, params: JsonObject) {
+        single { CaptchaChatsSettingsRepo(database) }
+    }
+
+    override suspend fun BehaviourContext.setupBotPlugin(koin: Koin) {
+        val repo: CaptchaChatsSettingsRepo by koin.inject()
+        val adminsAPI = koin.adminsPlugin ?.adminsAPI(koin.get())
+
         suspend fun Chat.settings() = repo.getById(id) ?: repo.create(ChatSettings(id)).first()
 
         onNewChatMembers(
