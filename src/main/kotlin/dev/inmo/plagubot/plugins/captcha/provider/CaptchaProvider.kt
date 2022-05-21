@@ -3,19 +3,20 @@ package dev.inmo.plagubot.plugins.captcha.provider
 import com.benasher44.uuid.uuid4
 import com.soywiz.klock.DateTime
 import com.soywiz.klock.seconds
-import dev.inmo.micro_utils.coroutines.safelyWithResult
-import dev.inmo.micro_utils.coroutines.safelyWithoutExceptions
+import dev.inmo.micro_utils.coroutines.*
 import dev.inmo.plagubot.plugins.captcha.slotMachineReplyMarkup
 import dev.inmo.tgbotapi.extensions.api.answers.answerCallbackQuery
 import dev.inmo.tgbotapi.extensions.api.chat.members.*
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
-import dev.inmo.tgbotapi.extensions.api.edit.ReplyMarkup.editMessageReplyMarkup
+import dev.inmo.tgbotapi.extensions.api.edit.reply_markup.editMessageReplyMarkup
 import dev.inmo.tgbotapi.extensions.api.send.sendDice
 import dev.inmo.tgbotapi.extensions.api.send.sendTextMessage
 import dev.inmo.tgbotapi.extensions.behaviour_builder.*
 import dev.inmo.tgbotapi.extensions.behaviour_builder.expectations.waitDataCallbackQuery
+import dev.inmo.tgbotapi.extensions.behaviour_builder.expectations.waitMessageDataCallbackQuery
 import dev.inmo.tgbotapi.extensions.utils.asSlotMachineReelImage
 import dev.inmo.tgbotapi.extensions.utils.calculateSlotMachineResult
+import dev.inmo.tgbotapi.extensions.utils.extensions.raw.message
 import dev.inmo.tgbotapi.extensions.utils.formatting.*
 import dev.inmo.tgbotapi.extensions.utils.shortcuts.executeUnsafe
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.InlineKeyboardMarkup
@@ -118,7 +119,9 @@ data class SlotMachineCaptchaProvider(
                 launch {
                     val clicked = arrayOf<String?>(null, null, null)
                     while (leftToClick.isNotEmpty()) {
-                        val userClicked = waitDataCallbackQuery { if (user.id == it.id) this else null }.first()
+                        val userClicked = waitMessageDataCallbackQuery {
+                            if (user.id == it.id && this.message.messageId == sentDice.messageId) this else null
+                        }.first()
                         if (userClicked.data == leftToClick.first()) {
                             clicked[3 - leftToClick.size] = leftToClick.removeAt(0)
                             if (clicked.contains(null)) {
@@ -179,52 +182,48 @@ data class SimpleCaptchaProvider(
         leftRestrictionsPermissions: ChatPermissions
     ) {
         val userBanDateTime = eventDateTime + checkTimeSpan
-        newUsers.mapNotNull {
-            safelyWithoutExceptions {
-                launch {
-                    createSubContextAndDoWithUpdatesFilter(stopOnCompletion = false) {
-                        val callbackData = uuid4().toString()
-                        val sentMessage = sendTextMessage(
-                            chat,
-                            buildEntities {
-                                +it.mention(it.firstName)
-                                regular(", $captchaText")
-                            },
-                            replyMarkup = InlineKeyboardMarkup(
-                                CallbackDataInlineKeyboardButton(buttonText, callbackData)
-                            )
+        newUsers.map {
+            launchSafelyWithoutExceptions {
+                createSubContext(this).doInContext(stopOnCompletion = false) {
+                    val callbackData = uuid4().toString()
+                    val sentMessage = sendTextMessage(
+                        chat,
+                        buildEntities {
+                            +it.mention(it.firstName)
+                            regular(", $captchaText")
+                        },
+                        replyMarkup = InlineKeyboardMarkup(
+                            CallbackDataInlineKeyboardButton(buttonText, callbackData)
                         )
+                    )
 
-                        suspend fun removeRedundantMessages() {
-                            safelyWithoutExceptions {
-                                deleteMessage(sentMessage)
+                    suspend fun removeRedundantMessages() {
+                        safelyWithoutExceptions {
+                            deleteMessage(sentMessage)
+                        }
+                    }
+
+                    val job = launchSafely {
+                        waitMessageDataCallbackQuery (
+                            filter = { query ->
+                                query.user.id == it.id && query.data == callbackData && query.message.messageId == sentMessage.messageId
                             }
-                        }
+                        ).first()
 
-                        val job = parallel {
-                            waitDataCallbackQuery {
-                                if (it.id == user.id && this.data == callbackData) {
-                                    this
-                                } else {
-                                    null
-                                }
-                            }.first()
-
-                            removeRedundantMessages()
-                            safelyWithoutExceptions { restrictChatMember(chat, it, permissions = leftRestrictionsPermissions) }
-                            stop()
-                        }
-
-                        delay((userBanDateTime - eventDateTime).millisecondsLong)
-
-                        if (job.isActive) {
-                            job.cancel()
-                            if (kick) {
-                                banUser(chat, it, leftRestrictionsPermissions)
-                            }
-                        }
+                        removeRedundantMessages()
+                        safelyWithoutExceptions { restrictChatMember(chat, it, permissions = leftRestrictionsPermissions) }
                         stop()
                     }
+
+                    delay((userBanDateTime - eventDateTime).millisecondsLong)
+
+                    if (job.isActive) {
+                        job.cancel()
+                        if (kick) {
+                            banUser(chat, it, leftRestrictionsPermissions)
+                        }
+                    }
+                    stop()
                 }
             }
         }.joinAll()
@@ -354,21 +353,23 @@ data class ExpressionCaptchaProvider(
                     }
 
                     var leftAttempts = attempts
-                    waitDataCallbackQuery {
-                        when {
-                            this.user.id != user.id -> null
-                            this.data != correctAnswer -> {
-                                leftAttempts--
-                                if (leftAttempts < 1) {
-                                    this
-                                } else {
-                                    answerCallbackQuery(this@waitDataCallbackQuery, leftRetriesText + leftAttempts)
-                                    null
-                                }
-                            }
-                            else -> this
+                    waitMessageDataCallbackQuery (
+                        filter = { query ->
+                            query.user.id == user.id && query.message.messageId == sentMessage.messageId
                         }
-                    }.first()
+                    ) {
+                        if (this.data != correctAnswer) {
+                            leftAttempts--
+                            if (leftAttempts < 1) {
+                                this
+                            } else {
+                                answerCallbackQuery(this@waitMessageDataCallbackQuery, leftRetriesText + leftAttempts)
+                                null
+                            }
+                        } else {
+                            this
+                        }
+                    }.take(1)
 
                     banJob.cancel()
 

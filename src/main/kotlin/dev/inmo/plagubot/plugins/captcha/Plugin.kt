@@ -106,35 +106,30 @@ class CaptchaBotPlugin : Plugin {
 
         onNewChatMembers(
             initialFilter = {
-                it.chat.asPublicChat() != null
-            },
-            subcontextUpdatesFilter = { m, u -> u.sourceChat() == m.chat },
+                it.chat is GroupChat
+            }
         ) {
-            launchSafelyWithoutExceptions {
-                val settings = it.chat.settings()
-                if (!settings.enabled) return@launchSafelyWithoutExceptions
+            val settings = it.chat.settings()
+            if (!settings.enabled) return@onNewChatMembers
 
-                safelyWithoutExceptions {
-                    if (settings.autoRemoveEvents) {
-                        deleteMessage(it)
-                    }
+            safelyWithoutExceptions {
+                if (settings.autoRemoveEvents) {
+                    deleteMessage(it)
                 }
-                val chat = it.chat.requireGroupChat()
-                val newUsers = it.chatEvent.members
-                newUsers.forEach { user ->
-                    restrictChatMember(
-                        chat,
-                        user,
-                        permissions = RestrictionsChatPermissions
-                    )
-                }
-                val defaultChatPermissions = (getChat(it.chat) as ExtendedGroupChat).permissions
+            }
+            val chat = it.chat.requireGroupChat()
+            val newUsers = it.chatEvent.members
+            newUsers.forEach { user ->
+                restrictChatMember(
+                    chat,
+                    user,
+                    permissions = RestrictionsChatPermissions
+                )
+            }
+            val defaultChatPermissions = (getChat(it.chat) as ExtendedGroupChat).permissions
 
-                createSubContextAndDoWithUpdatesFilter(stopOnCompletion = false) {
-                    launch {
-                        settings.captchaProvider.apply { doAction(it.date, chat, newUsers, defaultChatPermissions) }
-                    }
-                }
+            with (settings.captchaProvider) {
+                doAction(it.date, chat, newUsers, defaultChatPermissions)
             }
         }
 
