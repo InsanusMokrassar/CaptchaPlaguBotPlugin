@@ -15,9 +15,7 @@ import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onComman
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onNewChatMembers
 import dev.inmo.tgbotapi.extensions.utils.*
 import dev.inmo.tgbotapi.extensions.utils.extensions.parseCommandsWithParams
-import dev.inmo.tgbotapi.extensions.utils.extensions.sourceChat
 import dev.inmo.tgbotapi.libraries.cache.admins.*
-import dev.inmo.tgbotapi.types.BotCommand
 import dev.inmo.tgbotapi.types.chat.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
@@ -129,7 +127,7 @@ class CaptchaBotPlugin : Plugin {
             val defaultChatPermissions = (getChat(it.chat) as ExtendedGroupChat).permissions
 
             with (settings.captchaProvider) {
-                doAction(it.date, chat, newUsers, defaultChatPermissions)
+                doAction(it.date, chat, newUsers, defaultChatPermissions, adminsAPI)
             }
         }
 
