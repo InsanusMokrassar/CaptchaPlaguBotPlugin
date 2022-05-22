@@ -32,6 +32,7 @@ import dev.inmo.tgbotapi.types.message.textsources.mention
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.toList
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -94,12 +95,12 @@ data class SlotMachineCaptchaProvider(
         val userBanDateTime = eventDateTime + checkTimeSpan
         val authorized = Channel<User>(newUsers.size)
         val messagesToDelete = Channel<Message>(Channel.UNLIMITED)
-        val subContexts = newUsers.map {
+        val subContexts = newUsers.map { user ->
             createSubContextAndDoWithUpdatesFilter (stopOnCompletion = false) {
                 val sentMessage = sendTextMessage(
                     chat,
                     buildEntities {
-                        +it.mention(it.firstName)
+                        +user.mention(user.firstName)
                         regular(", $captchaText")
                     }
                 ).also { messagesToDelete.send(it) }
@@ -119,9 +120,7 @@ data class SlotMachineCaptchaProvider(
                 launch {
                     val clicked = arrayOf<String?>(null, null, null)
                     while (leftToClick.isNotEmpty()) {
-                        val userClicked = waitMessageDataCallbackQuery {
-                            if (user.id == it.id && this.message.messageId == sentDice.messageId) this else null
-                        }.first()
+                        val userClicked = waitMessageDataCallbackQuery().filter { it.user.id == user.id && it.message.messageId == sentDice.messageId }.first()
                         if (userClicked.data == leftToClick.first()) {
                             clicked[3 - leftToClick.size] = leftToClick.removeAt(0)
                             if (clicked.contains(null)) {
@@ -136,12 +135,12 @@ data class SlotMachineCaptchaProvider(
                             safelyWithoutExceptions { answerCallbackQuery(userClicked, "Nope") }
                         }
                     }
-                    authorized.send(it)
-                    safelyWithoutExceptions { restrictChatMember(chat, it, permissions = leftRestrictionsPermissions) }
+                    authorized.send(user)
+                    safelyWithoutExceptions { restrictChatMember(chat, user, permissions = leftRestrictionsPermissions) }
                     stop()
                 }
 
-                this to it
+                this to user
             }
         }
 
@@ -204,11 +203,9 @@ data class SimpleCaptchaProvider(
                     }
 
                     val job = launchSafely {
-                        waitMessageDataCallbackQuery (
-                            filter = { query ->
-                                query.user.id == it.id && query.data == callbackData && query.message.messageId == sentMessage.messageId
-                            }
-                        ).first()
+                        waitMessageDataCallbackQuery().filter { query ->
+                            query.user.id == it.id && query.data == callbackData && query.message.messageId == sentMessage.messageId
+                        }.first()
 
                         removeRedundantMessages()
                         safelyWithoutExceptions { restrictChatMember(chat, it, permissions = leftRestrictionsPermissions) }
@@ -353,23 +350,18 @@ data class ExpressionCaptchaProvider(
                     }
 
                     var leftAttempts = attempts
-                    waitMessageDataCallbackQuery (
-                        filter = { query ->
-                            query.user.id == user.id && query.message.messageId == sentMessage.messageId
-                        }
-                    ) {
-                        if (this.data != correctAnswer) {
-                            leftAttempts--
-                            if (leftAttempts < 1) {
-                                this
-                            } else {
-                                answerCallbackQuery(this@waitMessageDataCallbackQuery, leftRetriesText + leftAttempts)
-                                null
-                            }
+                    waitMessageDataCallbackQuery().takeWhile { leftAttempts > 0 }.filter { query ->
+                        val baseCheck = query.user.id == user.id && query.message.messageId == sentMessage.messageId
+                        baseCheck && if (query.data == correctAnswer) {
+                            true
                         } else {
-                            this
+                            leftAttempts--
+                            if (leftAttempts > 0) {
+                                answerCallbackQuery(query, leftRetriesText + leftAttempts)
+                            }
+                            false
                         }
-                    }.take(1)
+                    }.firstOrNull()
 
                     banJob.cancel()
 
