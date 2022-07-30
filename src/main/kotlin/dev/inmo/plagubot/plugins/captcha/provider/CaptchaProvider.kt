@@ -43,7 +43,8 @@ sealed class CaptchaProvider {
         chat: GroupChat,
         newUsers: List<User>,
         leftRestrictionsPermissions: ChatPermissions,
-        adminsApi: AdminsCacheAPI?
+        adminsApi: AdminsCacheAPI?,
+        kickOnUnsuccess: Boolean
     )
 }
 
@@ -113,7 +114,8 @@ data class SlotMachineCaptchaProvider(
         chat: GroupChat,
         newUsers: List<User>,
         leftRestrictionsPermissions: ChatPermissions,
-        adminsApi: AdminsCacheAPI?
+        adminsApi: AdminsCacheAPI?,
+        kickOnUnsuccess: Boolean
     ) {
         val userBanDateTime = eventDateTime + checkTimeSpan
         val authorized = Channel<User>(newUsers.size)
@@ -175,7 +177,7 @@ data class SlotMachineCaptchaProvider(
         subContexts.forEach { (context, user) ->
             if (user !in authorizedUsers) {
                 context.stop()
-                if (kick) {
+                if (kickOnUnsuccess) {
                     banUser(chat, user, leftRestrictionsPermissions)
                 }
             }
@@ -191,8 +193,7 @@ data class SlotMachineCaptchaProvider(
 data class SimpleCaptchaProvider(
     val checkTimeSeconds: Seconds = 60,
     val captchaText: String = "press this button to pass captcha:",
-    val buttonText: String = "Press me\uD83D\uDE0A",
-    val kick: Boolean = true
+    val buttonText: String = "Press me\uD83D\uDE0A"
 ) : CaptchaProvider() {
     @Transient
     private val checkTimeSpan = checkTimeSeconds.seconds
@@ -202,7 +203,8 @@ data class SimpleCaptchaProvider(
         chat: GroupChat,
         newUsers: List<User>,
         leftRestrictionsPermissions: ChatPermissions,
-        adminsApi: AdminsCacheAPI?
+        adminsApi: AdminsCacheAPI?,
+        kickOnUnsuccess: Boolean
     ) {
         val userBanDateTime = eventDateTime + checkTimeSpan
         newUsers.map { user ->
@@ -257,7 +259,7 @@ data class SimpleCaptchaProvider(
 
                     if (job.isActive) {
                         job.cancel()
-                        if (kick) {
+                        if (kickOnUnsuccess) {
                             banUser(chat, user, leftRestrictionsPermissions)
                         }
                     }
@@ -316,8 +318,7 @@ data class ExpressionCaptchaProvider(
     val maxPerNumber: Int = 10,
     val operations: Int = 2,
     val answers: Int = 6,
-    val attempts: Int = 3,
-    val kick: Boolean = true
+    val attempts: Int = 3
 ) : CaptchaProvider() {
     @Transient
     private val checkTimeSpan = checkTimeSeconds.seconds
@@ -327,7 +328,8 @@ data class ExpressionCaptchaProvider(
         chat: GroupChat,
         newUsers: List<User>,
         leftRestrictionsPermissions: ChatPermissions,
-        adminsApi: AdminsCacheAPI?
+        adminsApi: AdminsCacheAPI?,
+        kickOnUnsuccess: Boolean
     ) {
         val userBanDateTime = eventDateTime + checkTimeSpan
         newUsers.map { user ->
@@ -379,7 +381,7 @@ data class ExpressionCaptchaProvider(
                                 if (it) {
                                     safelyWithoutExceptions { restrictChatMember(chat, user, permissions = leftRestrictionsPermissions) }
                                 } else {
-                                    if (kick) {
+                                    if (kickOnUnsuccess) {
                                         banUser(chat, user, leftRestrictionsPermissions)
                                     }
                                 }

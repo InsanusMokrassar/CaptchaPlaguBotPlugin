@@ -11,5 +11,6 @@ data class ChatSettings(
     val captchaProvider: CaptchaProvider = SimpleCaptchaProvider(),
     val autoRemoveCommands: Boolean = false,
     val autoRemoveEvents: Boolean = true,
+    val kickOnUnsuccess: Boolean = true,
     val enabled: Boolean = true
 )

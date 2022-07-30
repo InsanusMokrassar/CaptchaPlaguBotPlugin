@@ -9,8 +9,8 @@ import dev.inmo.plagubot.plugins.captcha.provider.*
 import dev.inmo.plagubot.plugins.captcha.settings.ChatSettings
 import dev.inmo.plagubot.plugins.commands.BotCommandFullInfo
 import dev.inmo.plagubot.plugins.commands.CommandsKeeperKey
-import dev.inmo.tgbotapi.extensions.api.chat.get.getChat
 import dev.inmo.tgbotapi.extensions.api.chat.members.*
+import dev.inmo.tgbotapi.extensions.api.delete
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
 import dev.inmo.tgbotapi.extensions.api.send.*
 import dev.inmo.tgbotapi.extensions.behaviour_builder.*
@@ -151,10 +151,10 @@ class CaptchaBotPlugin : Plugin {
                     permissions = RestrictionsChatPermissions
                 )
             }
-            val defaultChatPermissions = (getChat(it.chat) as ExtendedGroupChat).permissions
+            val defaultChatPermissions = LeftRestrictionsChatPermissions
 
             with (settings.captchaProvider) {
-                doAction(it.date, chat, newUsers, defaultChatPermissions, adminsAPI)
+                doAction(it.date, chat, newUsers, defaultChatPermissions, adminsAPI, settings.kickOnUnsuccess)
             }
         }
 
@@ -283,6 +283,50 @@ class CaptchaBotPlugin : Plugin {
                     )
 
                     reply(message, "Ok, user joined service messages will not be deleted")
+
+                    if (settings.autoRemoveCommands) {
+                        deleteMessage(message)
+                    }
+                }
+            }
+
+            onCommand(enableKickOnUnsuccess) { message ->
+                message.doAfterVerification(adminsAPI) {
+                    val settings = message.chat.settings()
+
+                    repo.update(
+                        message.chat.id,
+                        settings.copy(kickOnUnsuccess = true)
+                    )
+
+                    reply(message, "Ok, new users didn't passed captcha will be kicked").apply {
+                        launchSafelyWithoutExceptions {
+                            delay(5000L)
+                            delete(this@apply)
+                        }
+                    }
+
+                    if (settings.autoRemoveCommands) {
+                        deleteMessage(message)
+                    }
+                }
+            }
+
+            onCommand(disableKickOnUnsuccess) { message ->
+                message.doAfterVerification(adminsAPI) {
+                    val settings = message.chat.settings()
+
+                    repo.update(
+                        message.chat.id,
+                        settings.copy(kickOnUnsuccess = false)
+                    )
+
+                    reply(message, "Ok, new users didn't passed captcha will NOT be kicked").apply {
+                        launchSafelyWithoutExceptions {
+                            delay(5000L)
+                            delete(this@apply)
+                        }
+                    }
 
                     if (settings.autoRemoveCommands) {
                         deleteMessage(message)
