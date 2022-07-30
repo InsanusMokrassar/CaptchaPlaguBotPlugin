@@ -146,18 +146,20 @@ data class SlotMachineCaptchaProvider(
                     val clicked = arrayOf<String?>(null, null, null)
                     while (leftToClick.isNotEmpty()) {
                         val userClicked = waitMessageDataCallbackQuery().filter { it.user.id == user.id && it.message.messageId == sentDice.messageId }.first()
-                        if (userClicked.data == leftToClick.first()) {
-                            clicked[3 - leftToClick.size] = leftToClick.removeAt(0)
-                            if (clicked.contains(null)) {
-                                safelyWithoutExceptions { answerCallbackQuery(userClicked, "Ok, next one") }
-                                editMessageReplyMarkup(sentDice, slotMachineReplyMarkup(clicked[0], clicked[1], clicked[2]))
-                            } else {
-                                safelyWithoutExceptions { answerCallbackQuery(userClicked, "Thank you and welcome", showAlert = true) }
-                                safelyWithoutExceptions { deleteMessage(sentMessage) }
-                                safelyWithoutExceptions { deleteMessage(sentDice) }
+
+                        when {
+                            userClicked.data == leftToClick.first() -> {
+                                clicked[3 - leftToClick.size] = leftToClick.removeAt(0)
+                                if (clicked.contains(null)) {
+                                    safelyWithoutExceptions { answerCallbackQuery(userClicked, "Ok, next one") }
+                                    editMessageReplyMarkup(sentDice, slotMachineReplyMarkup(clicked[0], clicked[1], clicked[2]))
+                                } else {
+                                    safelyWithoutExceptions { answerCallbackQuery(userClicked, "Thank you and welcome", showAlert = true) }
+                                    safelyWithoutExceptions { deleteMessage(sentMessage) }
+                                    safelyWithoutExceptions { deleteMessage(sentDice) }
+                                }
                             }
-                        } else {
-                            safelyWithoutExceptions { answerCallbackQuery(userClicked, "Nope") }
+                            else -> safelyWithoutExceptions { answerCallbackQuery(userClicked, "Nope") }
                         }
                     }
                     authorized.send(user)
@@ -378,12 +380,9 @@ data class ExpressionCaptchaProvider(
                             if (passed == null) {
                                 removeRedundantMessages()
                                 passed = it
-                                if (it) {
-                                    safelyWithoutExceptions { restrictChatMember(chat, user, permissions = leftRestrictionsPermissions) }
-                                } else {
-                                    if (kickOnUnsuccess) {
-                                        banUser(chat, user, leftRestrictionsPermissions)
-                                    }
+                                when {
+                                    it -> safelyWithoutExceptions { restrictChatMember(chat, user, permissions = leftRestrictionsPermissions) }
+                                    kickOnUnsuccess -> banUser(chat, user, leftRestrictionsPermissions)
                                 }
                             }
                         }

@@ -1,6 +1,7 @@
 package dev.inmo.plagubot.plugins.captcha
 
 import dev.inmo.tgbotapi.extensions.utils.SlotMachineReelImage
+import dev.inmo.tgbotapi.extensions.utils.types.buttons.*
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardButtons.CallbackDataInlineKeyboardButton
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup
 
@@ -23,7 +24,10 @@ fun slotMachineReplyMarkup(
         }
         else -> listOf(CallbackDataInlineKeyboardButton("$first$second$third", "$first$second$third"))
     }
-    return InlineKeyboardMarkup(
-        texts.chunked(2)
-    )
+    return inlineKeyboard {
+        texts.chunked(2).forEach { add(it) }
+//        row {
+//            dataButton("Cancel (Admins only)", "cancel")
+//        }
+    }
 }
