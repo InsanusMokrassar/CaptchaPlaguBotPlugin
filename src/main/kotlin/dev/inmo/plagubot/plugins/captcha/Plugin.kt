@@ -1,11 +1,14 @@
 package dev.inmo.plagubot.plugins.captcha
 
+import com.benasher44.uuid.uuid4
 import dev.inmo.micro_utils.coroutines.*
 import dev.inmo.micro_utils.repos.create
 import dev.inmo.plagubot.Plugin
 import dev.inmo.plagubot.plugins.captcha.db.CaptchaChatsSettingsRepo
 import dev.inmo.plagubot.plugins.captcha.provider.*
 import dev.inmo.plagubot.plugins.captcha.settings.ChatSettings
+import dev.inmo.plagubot.plugins.commands.BotCommandFullInfo
+import dev.inmo.plagubot.plugins.commands.CommandsKeeperKey
 import dev.inmo.tgbotapi.extensions.api.chat.get.getChat
 import dev.inmo.tgbotapi.extensions.api.chat.members.*
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
@@ -16,13 +19,16 @@ import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onNewCha
 import dev.inmo.tgbotapi.extensions.utils.*
 import dev.inmo.tgbotapi.extensions.utils.extensions.parseCommandsWithParams
 import dev.inmo.tgbotapi.libraries.cache.admins.*
+import dev.inmo.tgbotapi.types.BotCommand
 import dev.inmo.tgbotapi.types.chat.*
+import dev.inmo.tgbotapi.types.commands.BotCommandScope
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import org.jetbrains.exposed.sql.Database
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 
 private const val enableAutoDeleteCommands = "captcha_auto_delete_commands_on"
 private const val disableAutoDeleteCommands = "captcha_auto_delete_commands_off"
@@ -45,55 +51,76 @@ private val changeCaptchaMethodCommandRegex = Regex(
 
 @Serializable
 class CaptchaBotPlugin : Plugin {
-//    override suspend fun getCommands(): List<BotCommand> = listOf(
-//        BotCommand(
-//            enableAutoDeleteCommands,
-//            "Enable auto removing of commands addressed to captcha plugin"
-//        ),
-//        BotCommand(
-//            disableAutoDeleteCommands,
-//            "Disable auto removing of commands addressed to captcha plugin"
-//        ),
-//        BotCommand(
-//            enableAutoDeleteServiceMessages,
-//            "Enable auto removing of users joined messages"
-//        ),
-//        BotCommand(
-//            disableAutoDeleteServiceMessages,
-//            "Disable auto removing of users joined messages"
-//        ),
-//        BotCommand(
-//            enableSlotMachineCaptcha,
-//            "Change captcha method to slot machine"
-//        ),
-//        BotCommand(
-//            enableSimpleCaptcha,
-//            "Change captcha method to simple button"
-//        ),
-//        BotCommand(
-//            disableCaptcha,
-//            "Disable captcha for chat"
-//        ),
-//        BotCommand(
-//            enableCaptcha,
-//            "Enable captcha for chat"
-//        ),
-//        BotCommand(
-//            enableExpressionCaptcha,
-//            "Change captcha method to expressions"
-//        ),
-//        BotCommand(
-//            enableKickOnUnsuccess,
-//            "Not solved captcha users will be kicked from the chat"
-//        ),
-//        BotCommand(
-//            disableKickOnUnsuccess,
-//            "Not solved captcha users will NOT be kicked from the chat"
-//        )
-//    )
 
     override fun Module.setupDI(database: Database, params: JsonObject) {
         single { CaptchaChatsSettingsRepo(database) }
+
+        single(named(uuid4().toString())) {
+            BotCommandFullInfo(
+                CommandsKeeperKey(BotCommandScope.AllChatAdministrators),
+                BotCommand(enableAutoDeleteCommands, "Enable auto removing of commands addressed to captcha plugin")
+            )
+        }
+        single(named(uuid4().toString())) {
+            BotCommandFullInfo(
+                CommandsKeeperKey(BotCommandScope.AllChatAdministrators),
+                BotCommand(disableAutoDeleteCommands, "Disable auto removing of commands addressed to captcha plugin")
+            )
+        }
+        single(named(uuid4().toString())) {
+            BotCommandFullInfo(
+                CommandsKeeperKey(BotCommandScope.AllChatAdministrators),
+                BotCommand(enableAutoDeleteServiceMessages, "Enable auto removing of users joined messages")
+            )
+        }
+        single(named(uuid4().toString())) {
+            BotCommandFullInfo(
+                CommandsKeeperKey(BotCommandScope.AllChatAdministrators),
+                BotCommand(disableAutoDeleteServiceMessages, "Disable auto removing of users joined messages")
+            )
+        }
+        single(named(uuid4().toString())) {
+            BotCommandFullInfo(
+                CommandsKeeperKey(BotCommandScope.AllChatAdministrators),
+                BotCommand(enableSlotMachineCaptcha, "Change captcha method to slot machine")
+            )
+        }
+        single(named(uuid4().toString())) {
+            BotCommandFullInfo(
+                CommandsKeeperKey(BotCommandScope.AllChatAdministrators),
+                BotCommand(enableSimpleCaptcha, "Change captcha method to simple button")
+            )
+        }
+        single(named(uuid4().toString())) {
+            BotCommandFullInfo(
+                CommandsKeeperKey(BotCommandScope.AllChatAdministrators),
+                BotCommand(disableCaptcha, "Disable captcha for chat")
+            )
+        }
+        single(named(uuid4().toString())) {
+            BotCommandFullInfo(
+                CommandsKeeperKey(BotCommandScope.AllChatAdministrators),
+                BotCommand(enableCaptcha, "Enable captcha for chat")
+            )
+        }
+        single(named(uuid4().toString())) {
+            BotCommandFullInfo(
+                CommandsKeeperKey(BotCommandScope.AllChatAdministrators),
+                BotCommand(enableExpressionCaptcha, "Change captcha method to expressions")
+            )
+        }
+        single(named(uuid4().toString())) {
+            BotCommandFullInfo(
+                CommandsKeeperKey(BotCommandScope.AllChatAdministrators),
+                BotCommand(enableKickOnUnsuccess, "Not solved captcha users will be kicked from the chat")
+            )
+        }
+        single(named(uuid4().toString())) {
+            BotCommandFullInfo(
+                CommandsKeeperKey(BotCommandScope.AllChatAdministrators),
+                BotCommand(disableKickOnUnsuccess, "Not solved captcha users will NOT be kicked from the chat")
+            )
+        }
     }
 
     override suspend fun BehaviourContext.setupBotPlugin(koin: Koin) {
