@@ -125,7 +125,7 @@ class CaptchaBotPlugin : Plugin {
 
     override suspend fun BehaviourContext.setupBotPlugin(koin: Koin) {
         val repo: CaptchaChatsSettingsRepo by koin.inject()
-        val adminsAPI = koin.adminsPlugin ?.adminsAPI(koin.get())
+        val adminsAPI = koin.get<AdminsCacheAPI>()
 
         suspend fun Chat.settings() = repo.getById(id) ?: repo.create(ChatSettings(id)).first()
 
