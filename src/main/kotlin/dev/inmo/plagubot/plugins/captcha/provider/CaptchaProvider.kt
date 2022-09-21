@@ -1,12 +1,15 @@
 package dev.inmo.plagubot.plugins.captcha.provider
 
 import com.benasher44.uuid.uuid4
-import com.soywiz.klock.DateTime
-import com.soywiz.klock.seconds
+import com.soywiz.klock.*
+import dev.inmo.kslog.common.e
+import dev.inmo.kslog.common.logger
 import dev.inmo.micro_utils.coroutines.*
 import dev.inmo.plagubot.plugins.captcha.slotMachineReplyMarkup
+import dev.inmo.tgbotapi.extensions.api.answers.answer
 import dev.inmo.tgbotapi.extensions.api.answers.answerCallbackQuery
 import dev.inmo.tgbotapi.extensions.api.chat.members.*
+import dev.inmo.tgbotapi.extensions.api.delete
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
 import dev.inmo.tgbotapi.extensions.api.edit.edit
 import dev.inmo.tgbotapi.extensions.api.edit.reply_markup.editMessageReplyMarkup
@@ -15,7 +18,9 @@ import dev.inmo.tgbotapi.extensions.behaviour_builder.*
 import dev.inmo.tgbotapi.extensions.behaviour_builder.expectations.waitMessageDataCallbackQuery
 import dev.inmo.tgbotapi.extensions.utils.asSlotMachineReelImage
 import dev.inmo.tgbotapi.extensions.utils.calculateSlotMachineResult
+import dev.inmo.tgbotapi.extensions.utils.extensions.sameMessage
 import dev.inmo.tgbotapi.extensions.utils.shortcuts.executeUnsafe
+import dev.inmo.tgbotapi.extensions.utils.shortcuts.sentMessages
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.*
 import dev.inmo.tgbotapi.libraries.cache.admins.AdminsCacheAPI
 import dev.inmo.tgbotapi.requests.DeleteMessage
@@ -42,17 +47,100 @@ import kotlin.random.Random
 
 @Serializable
 sealed class CaptchaProvider {
-    abstract suspend fun BehaviourContext.doAction(
+    abstract val checkTimeSpan: TimeSpan
+
+    interface CaptchaProviderWorker {
+        suspend fun BehaviourContext.doCaptcha(): Boolean
+
+        suspend fun BehaviourContext.onCloseCaptcha(passed: Boolean)
+    }
+
+    protected abstract suspend fun allocateWorker(
+        eventDateTime: DateTime,
+        chat: GroupChat,
+        user: User,
+        leftRestrictionsPermissions: ChatPermissions,
+        adminsApi: AdminsCacheAPI?,
+        kickOnUnsuccess: Boolean
+    ): CaptchaProviderWorker
+
+    suspend fun BehaviourContext.doAction(
         eventDateTime: DateTime,
         chat: GroupChat,
         newUsers: List<User>,
         leftRestrictionsPermissions: ChatPermissions,
         adminsApi: AdminsCacheAPI?,
         kickOnUnsuccess: Boolean
-    )
+    ) {
+        val userBanDateTime = eventDateTime + checkTimeSpan
+        newUsers.map { user ->
+            launch {
+                createSubContextAndDoWithUpdatesFilter {
+                    val worker = allocateWorker(
+                        eventDateTime,
+                        chat,
+                        user,
+                        leftRestrictionsPermissions,
+                        adminsApi,
+                        kickOnUnsuccess
+                    )
+                    val deferred = async {
+                        runCatchingSafely {
+                            with(worker) {
+                                doCaptcha()
+                            }
+                        }.onFailure {
+                            this@CaptchaProvider.logger.e("Unable to do captcha", it)
+                        }.getOrElse { false }
+                    }
+
+                    val subscope = LinkedSupervisorScope()
+                    subscope.launch {
+                        delay((userBanDateTime - eventDateTime).millisecondsLong)
+                        subscope.cancel()
+                    }
+                    subscope.launch {
+                        deferred.await()
+                        subscope.cancel()
+                    }
+
+                    subscope.coroutineContext.job.join()
+
+                    val passed = runCatching {
+                        deferred.getCompleted()
+                    }.onFailure {
+                        deferred.cancel()
+                    }.getOrElse { false }
+
+                    when {
+                        passed -> {
+                            safelyWithoutExceptions {
+                                restrictChatMember(
+                                    chat,
+                                    user,
+                                    permissions = leftRestrictionsPermissions
+                                )
+                            }
+                        }
+                        else -> {
+                            send(chat, " ") {
+                                +"User" + mention(user) + underline("didn't passed") + "captcha"
+                            }
+                            if (kickOnUnsuccess) {
+                                banUser(chat, user, leftRestrictionsPermissions)
+                            }
+                        }
+                    }
+                    with(worker) {
+                        onCloseCaptcha(passed)
+                    }
+                }
+            }
+        }.joinAll()
+    }
 }
 
-private const val cancelData = "cancel"
+internal const val cancelData = "cancel"
 
 private fun EntitiesBuilder.mention(user: User, defaultName: String = "User"): EntitiesBuilder {
     return mention(
@@ -105,109 +193,94 @@ private suspend fun BehaviourContext.banUser(
 @Serializable
 data class SlotMachineCaptchaProvider(
     val checkTimeSeconds: Seconds = 300,
-    val captchaText: String = "solve this captcha: ",
-    val kick: Boolean = true
+    val captchaText: String = "Solve this captcha: "
 ) : CaptchaProvider() {
     @Transient
-    private val checkTimeSpan = checkTimeSeconds.seconds
+    override val checkTimeSpan = checkTimeSeconds.seconds
 
-    override suspend fun BehaviourContext.doAction(
+    private inner class Worker(
+        private val chat: GroupChat,
+        private val user: User,
+        private val adminsApi: AdminsCacheAPI?
+    ) : CaptchaProviderWorker {
+        private val messagesToDelete = mutableListOf<Message>()
+
+        override suspend fun BehaviourContext.doCaptcha(): Boolean {
+            val baseBuilder: EntitiesBuilderBody = {
+                mention(user)
+                regular(", $captchaText")
+            }
+            val sentMessage = send(
+                chat
+            ) {
+                baseBuilder()
+                +": ✖✖✖"
+            }.also { messagesToDelete.add(it) }
+            val sentDice = sendDice(
+                sentMessage.chat,
+                SlotMachineDiceAnimationType,
+                replyToMessageId = sentMessage.messageId,
+                replyMarkup = slotMachineReplyMarkup(adminsApi != null)
+            ).also { messagesToDelete.add(it) }
+            val reels = sentDice.content.dice.calculateSlotMachineResult()!!
+            val leftToClick = mutableListOf(
+                reels.left.asSlotMachineReelImage.text,
+                reels.center.asSlotMachineReelImage.text,
+                reels.right.asSlotMachineReelImage.text
+            )
+            val clicked = mutableListOf<String>()
+            fun buildTemplate() = "${clicked.joinToString("")}${leftToClick.joinToString("") { "✖" }}"
+
+            waitMessageDataCallbackQuery().filter {
+                when {
+                    !it.message.sameMessage(sentDice) -> false
+                    it.data == cancelData && adminsApi ?.isAdmin(chat.id, it.user.id) == true -> return@filter true
+                    it.data == cancelData && adminsApi ?.isAdmin(chat.id, it.user.id) != true -> {
+                        answer(
+                            it,
+                            "This button is only for admins"
+                        )
+                        false
+                    }
+                    it.user.id != user.id -> {
+                        answer(it, "This button is not for you")
+                        false
+                    }
+                    it.data != leftToClick.first() -> {
+                        answer(it, "Nope")
+                        false
+                    }
+                    else -> {
+                        clicked.add(leftToClick.removeFirst())
+                        answer(it, "Ok, next one")
+                        edit(sentMessage) {
+                            baseBuilder()
+                            +": ${buildTemplate()}"
+                        }
+                        leftToClick.isEmpty()
+                    }
+                }
+            }.first()
+
+            return true
+        }
+
+        override suspend fun BehaviourContext.onCloseCaptcha(passed: Boolean) {
+            while (messagesToDelete.isNotEmpty()) {
+                runCatchingSafely { delete(messagesToDelete.removeFirst()) }
+            }
+        }
+
+    }
+
+    override suspend fun allocateWorker(
         eventDateTime: DateTime,
         chat: GroupChat,
-        newUsers: List<User>,
+        user: User,
         leftRestrictionsPermissions: ChatPermissions,
         adminsApi: AdminsCacheAPI?,
         kickOnUnsuccess: Boolean
-    ) {
-        val userBanDateTime = eventDateTime + checkTimeSpan
-        val authorized = Channel<User>(newUsers.size)
-        val messagesToDelete = Channel<Message>(Channel.UNLIMITED)
-        val subContexts = newUsers.map { user ->
-            createSubContextAndDoWithUpdatesFilter(stopOnCompletion = false) {
-                val sentMessage = send(
-                    chat
-                ) {
-                    mention(user)
-                    regular(", $captchaText")
-                }.also { messagesToDelete.send(it) }
-                val sentDice = sendDice(
-                    sentMessage.chat,
-                    SlotMachineDiceAnimationType,
-                    replyToMessageId = sentMessage.messageId,
-                    replyMarkup = slotMachineReplyMarkup()
-                ).also { messagesToDelete.send(it) }
-                val reels = sentDice.content.dice.calculateSlotMachineResult()!!
-                val leftToClick = mutableListOf(
-                    reels.left.asSlotMachineReelImage.text,
-                    reels.center.asSlotMachineReelImage.text,
-                    reels.right.asSlotMachineReelImage.text
-                )
-
-                launch {
-                    val clicked = arrayOf<String?>(null, null, null)
-                    while (leftToClick.isNotEmpty()) {
-                        val userClicked =
-                            waitMessageDataCallbackQuery().filter { it.user.id == user.id && it.message.messageId == sentDice.messageId }
-                                .first()
-
-                        when {
-                            userClicked.data == leftToClick.first() -> {
-                                clicked[3 - leftToClick.size] = leftToClick.removeAt(0)
-                                if (clicked.contains(null)) {
-                                    safelyWithoutExceptions { answerCallbackQuery(userClicked, "Ok, next one") }
-                                    editMessageReplyMarkup(
-                                        sentDice,
-                                        slotMachineReplyMarkup(clicked[0], clicked[1], clicked[2])
-                                    )
-                                } else {
-                                    safelyWithoutExceptions {
-                                        answerCallbackQuery(
-                                            userClicked,
-                                            "Thank you and welcome",
-                                            showAlert = true
-                                        )
-                                    }
-                                    safelyWithoutExceptions { deleteMessage(sentMessage) }
-                                    safelyWithoutExceptions { deleteMessage(sentDice) }
-                                }
-                            }
-
-                            else -> safelyWithoutExceptions { answerCallbackQuery(userClicked, "Nope") }
-                        }
-                    }
-                    authorized.send(user)
-                    safelyWithoutExceptions {
-                        restrictChatMember(
-                            chat,
-                            user,
-                            permissions = leftRestrictionsPermissions
-                        )
-                    }
-                    stop()
-                }
-
-                this to user
-            }
-        }
-
-        delay((userBanDateTime - eventDateTime).millisecondsLong)
-
-        authorized.close()
-        val authorizedUsers = authorized.toList()
-
-        subContexts.forEach { (context, user) ->
-            if (user !in authorizedUsers) {
-                context.stop()
-                if (kickOnUnsuccess) {
-                    banUser(chat, user, leftRestrictionsPermissions)
-                }
-            }
-        }
-        messagesToDelete.close()
-        for (message in messagesToDelete) {
-            executeUnsafe(DeleteMessage(message.chat.id, message.messageId), retries = 0)
-        }
-    }
+    ): CaptchaProviderWorker = Worker(chat, user, adminsApi)
 }
 
 @Serializable
@@ -217,86 +290,78 @@ data class SimpleCaptchaProvider(
     val buttonText: String = "Press me\uD83D\uDE0A"
 ) : CaptchaProvider() {
     @Transient
-    private val checkTimeSpan = checkTimeSeconds.seconds
+    override val checkTimeSpan = checkTimeSeconds.seconds
 
-    override suspend fun BehaviourContext.doAction(
+    private inner class Worker(
+        private val chat: GroupChat,
+        private val user: User,
+        private val adminsApi: AdminsCacheAPI?
+    ) : CaptchaProviderWorker {
+        private var sentMessage: Message? = null
+        override suspend fun BehaviourContext.doCaptcha(): Boolean {
+            val callbackData = uuid4().toString()
+            val sentMessage = send(
+                chat,
+                replyMarkup = inlineKeyboard {
+                    row {
+                        dataButton(buttonText, callbackData)
+                    }
+                    if (adminsApi != null) {
+                        row {
+                            dataButton("Cancel (Admins only)", cancelData)
+                        }
+                    }
+                }
+            ) {
+                mention(user)
+                regular(", $captchaText")
+            }
+            this@Worker.sentMessage = sentMessage
+
+            val pushed = waitMessageDataCallbackQuery().filter {
+                when {
+                    !it.message.sameMessage(sentMessage) -> false
+                    it.data == callbackData && it.user.id == user.id -> true
+                    it.data == cancelData && (adminsApi ?.isAdmin(chat.id, it.user.id) == true) -> true
+                    it.data == callbackData -> {
+                        answer(it, "This button is not for you")
+                        false
+                    }
+                    it.data == cancelData -> {
+                        answer(it, "This button is for admins only")
+                        false
+                    }
+                    else -> false
+                }
+            }.first()
+
+            answer(
+                pushed,
+                when (pushed.data) {
+                    cancelData -> "You have cancelled captcha"
+                    else -> "Ok, thanks"
+                }
+            )
+
+            return true
+        }
+
+        override suspend fun BehaviourContext.onCloseCaptcha(passed: Boolean) {
+            sentMessage ?.let {
+                delete(it)
+            }
+        }
+
+    }
+
+    override suspend fun allocateWorker(
         eventDateTime: DateTime,
         chat: GroupChat,
-        newUsers: List<User>,
+        user: User,
         leftRestrictionsPermissions: ChatPermissions,
         adminsApi: AdminsCacheAPI?,
         kickOnUnsuccess: Boolean
-    ) {
-        val userBanDateTime = eventDateTime + checkTimeSpan
-        newUsers.map { user ->
-            launchSafelyWithoutExceptions {
-                createSubContext(this).doInContext(stopOnCompletion = false) {
-                    val callbackData = uuid4().toString()
-                    val sentMessage = send(
-                        chat,
-                        replyMarkup = inlineKeyboard {
-                            row {
-                                dataButton(buttonText, callbackData)
-                            }
-                            if (adminsApi != null) {
-                                row {
-                                    dataButton("Cancel (Admins only)", cancelData)
-                                }
-                            }
-                        }
-                    ) {
-                        mention(user)
-                        regular(", $captchaText")
-                    }
-
-                    suspend fun removeRedundantMessages() {
-                        safelyWithoutExceptions {
-                            deleteMessage(sentMessage)
-                        }
-                    }
-
-                    val job = launchSafely {
-                        waitMessageDataCallbackQuery().filter { query ->
-                            val baseCheck = query.message.messageId == sentMessage.messageId
-                            val userAnswered = query.user.id == user.id && query.data == callbackData
-                            val adminCanceled = (query.data == cancelData && (adminsApi?.isAdmin(
-                                sentMessage.chat.id,
-                                query.user.id
-                            )) == true)
-                            if (baseCheck && adminCanceled) {
-                                sendAdminCanceledMessage(
-                                    sentMessage.chat,
-                                    user,
-                                    query.user
-                                )
-                            }
-                            baseCheck && (adminCanceled || userAnswered)
-                        }.first()
-
-                        removeRedundantMessages()
-                        safelyWithoutExceptions {
-                            restrictChatMember(
-                                chat,
-                                user,
-                                permissions = leftRestrictionsPermissions
-                            )
-                        }
-                        stop()
-                    }
-
-                    delay((userBanDateTime - eventDateTime).millisecondsLong)
-
-                    if (job.isActive) {
-                        job.cancel()
-                        if (kickOnUnsuccess) {
-                            banUser(chat, user, leftRestrictionsPermissions)
-                        }
-                    }
-                    stop()
-                }
-            }
-        }.joinAll()
-    }
+    ): CaptchaProviderWorker = Worker(chat, user, adminsApi)
 }
 
 private object ExpressionBuilder {
@@ -355,130 +420,85 @@ data class ExpressionCaptchaProvider(
     val attempts: Int = 3
 ) : CaptchaProvider() {
     @Transient
-    private val checkTimeSpan = checkTimeSeconds.seconds
+    override val checkTimeSpan = checkTimeSeconds.seconds
 
-    override suspend fun BehaviourContext.doAction(
+    private inner class Worker(
+        private val chat: GroupChat,
+        private val user: User,
+        private val adminsApi: AdminsCacheAPI?
+    ) : CaptchaProviderWorker {
+        private var sentMessage: Message? = null
+        override suspend fun BehaviourContext.doCaptcha(): Boolean {
+            val callbackData = ExpressionBuilder.createExpression(
+                maxPerNumber,
+                operations
+            )
+            val correctAnswer = callbackData.first.toString()
+            val answers = (0 until answers - 1).map {
+                ExpressionBuilder.generateResult(maxPerNumber, operations)
+            }.toMutableList().also { orderedAnswers ->
+                val correctAnswerPosition = Random.nextInt(orderedAnswers.size)
+                orderedAnswers.add(correctAnswerPosition, callbackData.first)
+            }.toList()
+            val sentMessage = send(
+                chat,
+                replyMarkup = inlineKeyboard {
+                    answers.map {
+                        CallbackDataInlineKeyboardButton(it.toString(), it.toString())
+                    }.chunked(3).forEach(::add)
+                    if (adminsApi != null) {
+                        row {
+                            dataButton("Cancel (Admins only)", cancelData)
+                        }
+                    }
+                }
+            ) {
+                mention(user)
+                regular(", $captchaText ")
+                bold(callbackData.second)
+            }
+
+            var leftAttempts = attempts
+            return waitMessageDataCallbackQuery().takeWhile { leftAttempts > 0 }.map { query ->
+                val baseCheck = query.message.messageId == sentMessage.messageId
+                val dataCorrect = (query.user.id == user.id && query.data == correctAnswer)
+                val adminCanceled = (query.data == cancelData && (adminsApi?.isAdmin(
+                    sentMessage.chat.id,
+                    query.user.id
+                )) == true)
+                baseCheck && if (dataCorrect || adminCanceled) {
+                    if (adminCanceled) {
+                        sendAdminCanceledMessage(
+                            sentMessage.chat,
+                            user,
+                            query.user
+                        )
+                    }
+                    true
+                } else {
+                    leftAttempts--
+                    if (leftAttempts > 0) {
+                        answerCallbackQuery(query, leftRetriesText + leftAttempts)
+                    }
+                    false
+                }
+            }.firstOrNull() ?: false
+        }
+
+        override suspend fun BehaviourContext.onCloseCaptcha(passed: Boolean) {
+            sentMessage ?.let {
+                delete(it)
+            }
+        }
+    }
+
+    override suspend fun allocateWorker(
         eventDateTime: DateTime,
         chat: GroupChat,
-        newUsers: List<User>,
+        user: User,
         leftRestrictionsPermissions: ChatPermissions,
         adminsApi: AdminsCacheAPI?,
         kickOnUnsuccess: Boolean
-    ) {
-        val userBanDateTime = eventDateTime + checkTimeSpan
-        newUsers.map { user ->
-            launch {
-                createSubContextAndDoWithUpdatesFilter {
-                    val callbackData = ExpressionBuilder.createExpression(
-                        maxPerNumber,
-                        operations
-                    )
-                    val correctAnswer = callbackData.first.toString()
-                    val answers = (0 until answers - 1).map {
-                        ExpressionBuilder.generateResult(maxPerNumber, operations)
-                    }.toMutableList().also { orderedAnswers ->
-                        val correctAnswerPosition = Random.nextInt(orderedAnswers.size)
-                        orderedAnswers.add(correctAnswerPosition, callbackData.first)
-                    }.toList()
-                    val sentMessage = send(
-                        chat,
-                        replyMarkup = inlineKeyboard {
-                            answers.map {
-                                CallbackDataInlineKeyboardButton(it.toString(), it.toString())
-                            }.chunked(3).forEach(::add)
-                            if (adminsApi != null) {
-                                row {
-                                    dataButton("Cancel (Admins only)", cancelData)
-                                }
-                            }
-                        }
-                    ) {
-                        mention(user)
-                        regular(", $captchaText ")
-                        bold(callbackData.second)
-                    }
-
-                    suspend fun removeRedundantMessages(removeSentMessage: Boolean = true) {
-                        safelyWithoutExceptions {
-                            if (removeSentMessage) {
-                                deleteMessage(sentMessage)
-                            }
-                        }
-                    }
-
-                    var passed: Boolean? = null
-                    val passedMutex = Mutex()
-                    val callback: suspend (Boolean) -> Unit = {
-                        passedMutex.withLock {
-                            if (passed == null) {
-                                passed = it
-                                runCatchingSafely<Unit> {
-                                    when {
-                                        it -> {
-                                            removeRedundantMessages()
-                                            safelyWithoutExceptions {
-                                                restrictChatMember(
-                                                    chat,
-                                                    user,
-                                                    permissions = leftRestrictionsPermissions
-                                                )
-                                            }
-                                        }
-                                        else -> {
-                                            removeRedundantMessages(removeSentMessage = false)
-                                            edit(sentMessage) {
-                                                +"User " + mention(user) + underline("didn't passed") + "captcha"
-                                            }
-                                            if (kickOnUnsuccess) {
-                                                banUser(chat, user, leftRestrictionsPermissions)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    val banJob = launch {
-                        delay((userBanDateTime - eventDateTime).millisecondsLong)
-
-                        if (passed == null) {
-                            callback(false)
-                            stop()
-                        }
-                    }
-
-                    var leftAttempts = attempts
-                    waitMessageDataCallbackQuery().takeWhile { leftAttempts > 0 }.filter { query ->
-                        val baseCheck = query.message.messageId == sentMessage.messageId
-                        val dataCorrect = (query.user.id == user.id && query.data == correctAnswer)
-                        val adminCanceled = (query.data == cancelData && (adminsApi?.isAdmin(
-                            sentMessage.chat.id,
-                            query.user.id
-                        )) == true)
-                        baseCheck && if (dataCorrect || adminCanceled) {
-                            banJob.cancel()
-                            if (adminCanceled) {
-                                sendAdminCanceledMessage(
-                                    sentMessage.chat,
-                                    user,
-                                    query.user
-                                )
-                            }
-                            true
-                        } else {
-                            leftAttempts--
-                            if (leftAttempts > 0) {
-                                answerCallbackQuery(query, leftRetriesText + leftAttempts)
-                            }
-                            false
-                        }
-                    }.firstOrNull()
-
-                    callback(leftAttempts > 0)
-                }
-            }
-        }.joinAll()
-    }
+    ): CaptchaProviderWorker = Worker(chat, user, adminsApi)
 }
 
