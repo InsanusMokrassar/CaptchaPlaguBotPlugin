@@ -456,6 +456,8 @@ data class ExpressionCaptchaProvider(
                 mention(user)
                 regular(", $captchaText ")
                 bold(callbackData.second)
+            }.also {
+                sentMessage = it
             }
 
             var leftAttempts = attempts
