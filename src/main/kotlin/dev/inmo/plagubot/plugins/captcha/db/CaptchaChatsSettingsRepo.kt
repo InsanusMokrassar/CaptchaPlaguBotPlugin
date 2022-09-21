@@ -33,6 +33,7 @@ class CaptchaChatsSettingsRepo(
     private val autoRemoveCommandsColumn = bool("autoRemoveCommands")
     private val autoRemoveEventsColumn = bool("autoRemoveEvents").apply { default(true) }
     private val enabledColumn = bool("enabled").default(true)
+    private val kickOnUnsuccessColumn = bool("kick").default(true)
 
     override val primaryKey = PrimaryKey(chatIdColumn)
 
@@ -46,6 +47,7 @@ class CaptchaChatsSettingsRepo(
         it[autoRemoveCommandsColumn] = value.autoRemoveCommands
         it[autoRemoveEventsColumn] = value.autoRemoveEvents
         it[enabledColumn] = value.enabled
+        it[kickOnUnsuccessColumn] = value.kickOnUnsuccess
     }
 
     override fun update(id: ChatId, value: ChatSettings, it: UpdateStatement) {
@@ -54,6 +56,7 @@ class CaptchaChatsSettingsRepo(
             it[autoRemoveCommandsColumn] = value.autoRemoveCommands
             it[autoRemoveEventsColumn] = value.autoRemoveEvents
             it[enabledColumn] = value.enabled
+            it[kickOnUnsuccessColumn] = value.kickOnUnsuccess
         }
     }
 
@@ -62,7 +65,8 @@ class CaptchaChatsSettingsRepo(
         captchaProvider = captchaProviderSerialFormat.decodeFromString(CaptchaProvider.serializer(), get(captchaProviderColumn)),
         autoRemoveCommands = get(autoRemoveCommandsColumn),
         autoRemoveEvents = get(autoRemoveEventsColumn),
-        enabled = get(enabledColumn)
+        enabled = get(enabledColumn),
+        kickOnUnsuccess = get(kickOnUnsuccessColumn)
     )
 
     override val selectById: SqlExpressionBuilder.(ChatId) -> Op<Boolean> = { chatIdColumn.eq(it.chatId) }
@@ -72,7 +76,8 @@ class CaptchaChatsSettingsRepo(
             captchaProvider = captchaProviderSerialFormat.decodeFromString(CaptchaProvider.serializer(), get(captchaProviderColumn)),
             autoRemoveCommands = get(autoRemoveCommandsColumn),
             autoRemoveEvents = get(autoRemoveEventsColumn),
-            enabled = get(enabledColumn)
+            enabled = get(enabledColumn),
+            kickOnUnsuccess = get(kickOnUnsuccessColumn)
         )
 
     init {
