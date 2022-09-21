@@ -125,7 +125,7 @@ class CaptchaBotPlugin : Plugin {
 
     override suspend fun BehaviourContext.setupBotPlugin(koin: Koin) {
         val repo: CaptchaChatsSettingsRepo by koin.inject()
-        val adminsAPI = koin.get<AdminsCacheAPI>()
+        val adminsAPI = koin.getOrNull<AdminsCacheAPI>()
 
         suspend fun Chat.settings() = repo.getById(id) ?: repo.create(ChatSettings(id)).first()
 
@@ -142,7 +142,7 @@ class CaptchaBotPlugin : Plugin {
                     deleteMessage(it)
                 }
             }
-            val chat = it.chat.requireGroupChat()
+            val chat = it.chat.groupChatOrThrow()
             val newUsers = it.chatEvent.members
             newUsers.forEach { user ->
                 restrictChatMember(

@@ -14,7 +14,6 @@ import dev.inmo.tgbotapi.extensions.behaviour_builder.*
 import dev.inmo.tgbotapi.extensions.behaviour_builder.expectations.waitMessageDataCallbackQuery
 import dev.inmo.tgbotapi.extensions.utils.asSlotMachineReelImage
 import dev.inmo.tgbotapi.extensions.utils.calculateSlotMachineResult
-import dev.inmo.tgbotapi.extensions.utils.formatting.*
 import dev.inmo.tgbotapi.extensions.utils.shortcuts.executeUnsafe
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.*
 import dev.inmo.tgbotapi.libraries.cache.admins.AdminsCacheAPI
@@ -26,6 +25,10 @@ import dev.inmo.tgbotapi.types.chat.*
 import dev.inmo.tgbotapi.types.chat.User
 import dev.inmo.tgbotapi.types.dice.SlotMachineDiceAnimationType
 import dev.inmo.tgbotapi.types.message.abstracts.Message
+import dev.inmo.tgbotapi.utils.*
+import dev.inmo.tgbotapi.utils.EntitiesBuilder
+import dev.inmo.tgbotapi.utils.bold
+import dev.inmo.tgbotapi.utils.regular
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.toList
@@ -56,7 +59,7 @@ private fun EntitiesBuilder.mention(user: User, defaultName: String = "User"): E
             user.lastName.takeIf { it.isNotBlank() }, user.firstName.takeIf { it.isNotBlank() }
         ).takeIf {
             it.isNotEmpty()
-        } ?.joinToString(" ") ?: defaultName,
+        }?.joinToString(" ") ?: defaultName,
         user
     )
 }
@@ -67,14 +70,13 @@ private suspend fun BehaviourContext.sendAdminCanceledMessage(
     admin: User
 ) {
     safelyWithoutExceptions {
-        sendTextMessage(
-            chat,
-            buildEntities {
-                mention(admin, "Admin")
-                regular(" cancelled captcha for ")
-                mention(captchaSolver)
-            }
-        )
+        send(
+            chat
+        ) {
+            mention(admin, "Admin")
+            regular(" cancelled captcha for ")
+            mention(captchaSolver)
+        }
     }
 }
 
@@ -84,13 +86,12 @@ private suspend fun BehaviourContext.banUser(
     leftRestrictionsPermissions: ChatPermissions,
     onFailure: suspend BehaviourContext.(Throwable) -> Unit = {
         safelyWithResult {
-            sendTextMessage(
-                chat,
-                buildEntities(" ") {
-                    mention(user)
-                    +"failed captcha"
-                }
-            )
+            send(
+                chat
+            ) {
+                mention(user)
+                +"failed captcha"
+            }
         }
     }
 ): Result<Boolean> = safelyWithResult {
@@ -121,14 +122,13 @@ data class SlotMachineCaptchaProvider(
         val authorized = Channel<User>(newUsers.size)
         val messagesToDelete = Channel<Message>(Channel.UNLIMITED)
         val subContexts = newUsers.map { user ->
-            createSubContextAndDoWithUpdatesFilter (stopOnCompletion = false) {
-                val sentMessage = sendTextMessage(
-                    chat,
-                    buildEntities {
-                        mention(user)
-                        regular(", $captchaText")
-                    }
-                ).also { messagesToDelete.send(it) }
+            createSubContextAndDoWithUpdatesFilter(stopOnCompletion = false) {
+                val sentMessage = send(
+                    chat
+                ) {
+                    mention(user)
+                    regular(", $captchaText")
+                }.also { messagesToDelete.send(it) }
                 val sentDice = sendDice(
                     sentMessage.chat,
                     SlotMachineDiceAnimationType,
@@ -145,25 +145,43 @@ data class SlotMachineCaptchaProvider(
                 launch {
                     val clicked = arrayOf<String?>(null, null, null)
                     while (leftToClick.isNotEmpty()) {
-                        val userClicked = waitMessageDataCallbackQuery().filter { it.user.id == user.id && it.message.messageId == sentDice.messageId }.first()
+                        val userClicked =
+                            waitMessageDataCallbackQuery().filter { it.user.id == user.id && it.message.messageId == sentDice.messageId }
+                                .first()
 
                         when {
                             userClicked.data == leftToClick.first() -> {
                                 clicked[3 - leftToClick.size] = leftToClick.removeAt(0)
                                 if (clicked.contains(null)) {
                                     safelyWithoutExceptions { answerCallbackQuery(userClicked, "Ok, next one") }
-                                    editMessageReplyMarkup(sentDice, slotMachineReplyMarkup(clicked[0], clicked[1], clicked[2]))
+                                    editMessageReplyMarkup(
+                                        sentDice,
+                                        slotMachineReplyMarkup(clicked[0], clicked[1], clicked[2])
+                                    )
                                 } else {
-                                    safelyWithoutExceptions { answerCallbackQuery(userClicked, "Thank you and welcome", showAlert = true) }
+                                    safelyWithoutExceptions {
+                                        answerCallbackQuery(
+                                            userClicked,
+                                            "Thank you and welcome",
+                                            showAlert = true
+                                        )
+                                    }
                                     safelyWithoutExceptions { deleteMessage(sentMessage) }
                                     safelyWithoutExceptions { deleteMessage(sentDice) }
                                 }
                             }
+
                             else -> safelyWithoutExceptions { answerCallbackQuery(userClicked, "Nope") }
                         }
                     }
                     authorized.send(user)
-                    safelyWithoutExceptions { restrictChatMember(chat, user, permissions = leftRestrictionsPermissions) }
+                    safelyWithoutExceptions {
+                        restrictChatMember(
+                            chat,
+                            user,
+                            permissions = leftRestrictionsPermissions
+                        )
+                    }
                     stop()
                 }
 
@@ -213,12 +231,8 @@ data class SimpleCaptchaProvider(
             launchSafelyWithoutExceptions {
                 createSubContext(this).doInContext(stopOnCompletion = false) {
                     val callbackData = uuid4().toString()
-                    val sentMessage = sendTextMessage(
+                    val sentMessage = send(
                         chat,
-                        buildEntities {
-                            mention(user)
-                            regular(", $captchaText")
-                        },
                         replyMarkup = inlineKeyboard {
                             row {
                                 dataButton(buttonText, callbackData)
@@ -229,7 +243,10 @@ data class SimpleCaptchaProvider(
                                 }
                             }
                         }
-                    )
+                    ) {
+                        mention(user)
+                        regular(", $captchaText")
+                    }
 
                     suspend fun removeRedundantMessages() {
                         safelyWithoutExceptions {
@@ -241,7 +258,10 @@ data class SimpleCaptchaProvider(
                         waitMessageDataCallbackQuery().filter { query ->
                             val baseCheck = query.message.messageId == sentMessage.messageId
                             val userAnswered = query.user.id == user.id && query.data == callbackData
-                            val adminCanceled = (query.data == cancelData && (adminsApi ?.isAdmin(sentMessage.chat.id, query.user.id)) == true)
+                            val adminCanceled = (query.data == cancelData && (adminsApi?.isAdmin(
+                                sentMessage.chat.id,
+                                query.user.id
+                            )) == true)
                             if (baseCheck && adminCanceled) {
                                 sendAdminCanceledMessage(
                                     sentMessage.chat,
@@ -253,7 +273,13 @@ data class SimpleCaptchaProvider(
                         }.first()
 
                         removeRedundantMessages()
-                        safelyWithoutExceptions { restrictChatMember(chat, user, permissions = leftRestrictionsPermissions) }
+                        safelyWithoutExceptions {
+                            restrictChatMember(
+                                chat,
+                                user,
+                                permissions = leftRestrictionsPermissions
+                            )
+                        }
                         stop()
                     }
 
@@ -279,15 +305,19 @@ private object ExpressionBuilder {
 
             override fun Int.perform(other: Int): Int = plus(other)
         }
+
         object MinusExpressionOperation : ExpressionOperation() {
             override fun asString(): String = "-"
 
             override fun Int.perform(other: Int): Int = minus(other)
         }
+
         abstract fun asString(): String
         abstract fun Int.perform(other: Int): Int
     }
-    private val experssions = listOf(ExpressionOperation.PlusExpressionOperation, ExpressionOperation.MinusExpressionOperation)
+
+    private val experssions =
+        listOf(ExpressionOperation.PlusExpressionOperation, ExpressionOperation.MinusExpressionOperation)
 
     private fun createNumber(max: Int) = Random.nextInt(max + 1)
     fun generateResult(max: Int, operationsNumber: Int = 1): Int {
@@ -299,6 +329,7 @@ private object ExpressionBuilder {
         }
         return current
     }
+
     fun createExpression(max: Int, operationsNumber: Int = 1): Pair<Int, String> {
         val operations = (0 until operationsNumber).map { experssions.random() }
         var current = createNumber(max)
@@ -348,13 +379,8 @@ data class ExpressionCaptchaProvider(
                         val correctAnswerPosition = Random.nextInt(orderedAnswers.size)
                         orderedAnswers.add(correctAnswerPosition, callbackData.first)
                     }.toList()
-                    val sentMessage = sendTextMessage(
+                    val sentMessage = send(
                         chat,
-                        buildEntities {
-                            mention(user)
-                            regular(", $captchaText ")
-                            bold(callbackData.second)
-                        },
                         replyMarkup = inlineKeyboard {
                             answers.map {
                                 CallbackDataInlineKeyboardButton(it.toString(), it.toString())
@@ -365,7 +391,11 @@ data class ExpressionCaptchaProvider(
                                 }
                             }
                         }
-                    )
+                    ) {
+                        mention(user)
+                        regular(", $captchaText ")
+                        bold(callbackData.second)
+                    }
 
                     suspend fun removeRedundantMessages() {
                         safelyWithoutExceptions {
@@ -381,7 +411,14 @@ data class ExpressionCaptchaProvider(
                                 removeRedundantMessages()
                                 passed = it
                                 when {
-                                    it -> safelyWithoutExceptions { restrictChatMember(chat, user, permissions = leftRestrictionsPermissions) }
+                                    it -> safelyWithoutExceptions {
+                                        restrictChatMember(
+                                            chat,
+                                            user,
+                                            permissions = leftRestrictionsPermissions
+                                        )
+                                    }
+
                                     kickOnUnsuccess -> banUser(chat, user, leftRestrictionsPermissions)
                                 }
                             }
@@ -401,7 +438,10 @@ data class ExpressionCaptchaProvider(
                     waitMessageDataCallbackQuery().takeWhile { leftAttempts > 0 }.filter { query ->
                         val baseCheck = query.message.messageId == sentMessage.messageId
                         val dataCorrect = (query.user.id == user.id && query.data == correctAnswer)
-                        val adminCanceled = (query.data == cancelData && (adminsApi ?.isAdmin(sentMessage.chat.id, query.user.id)) == true)
+                        val adminCanceled = (query.data == cancelData && (adminsApi?.isAdmin(
+                            sentMessage.chat.id,
+                            query.user.id
+                        )) == true)
                         baseCheck && if (dataCorrect || adminCanceled) {
                             banJob.cancel()
                             if (adminCanceled) {
