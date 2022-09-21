@@ -192,7 +192,7 @@ private suspend fun BehaviourContext.banUser(
 
 @Serializable
 data class SlotMachineCaptchaProvider(
-    val checkTimeSeconds: Seconds = 300,
+    val checkTimeSeconds: Seconds = 60,
     val captchaText: String = "Solve this captcha: "
 ) : CaptchaProvider() {
     @Transient
