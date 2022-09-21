@@ -8,6 +8,7 @@ import dev.inmo.plagubot.plugins.captcha.slotMachineReplyMarkup
 import dev.inmo.tgbotapi.extensions.api.answers.answerCallbackQuery
 import dev.inmo.tgbotapi.extensions.api.chat.members.*
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
+import dev.inmo.tgbotapi.extensions.api.edit.edit
 import dev.inmo.tgbotapi.extensions.api.edit.reply_markup.editMessageReplyMarkup
 import dev.inmo.tgbotapi.extensions.api.send.*
 import dev.inmo.tgbotapi.extensions.behaviour_builder.*
@@ -397,9 +398,11 @@ data class ExpressionCaptchaProvider(
                         bold(callbackData.second)
                     }
 
-                    suspend fun removeRedundantMessages() {
+                    suspend fun removeRedundantMessages(removeSentMessage: Boolean = true) {
                         safelyWithoutExceptions {
-                            deleteMessage(sentMessage)
+                            if (removeSentMessage) {
+                                deleteMessage(sentMessage)
+                            }
                         }
                     }
 
@@ -408,18 +411,29 @@ data class ExpressionCaptchaProvider(
                     val callback: suspend (Boolean) -> Unit = {
                         passedMutex.withLock {
                             if (passed == null) {
-                                removeRedundantMessages()
                                 passed = it
-                                when {
-                                    it -> safelyWithoutExceptions {
-                                        restrictChatMember(
-                                            chat,
-                                            user,
-                                            permissions = leftRestrictionsPermissions
-                                        )
+                                runCatchingSafely<Unit> {
+                                    when {
+                                        it -> {
+                                            removeRedundantMessages()
+                                            safelyWithoutExceptions {
+                                                restrictChatMember(
+                                                    chat,
+                                                    user,
+                                                    permissions = leftRestrictionsPermissions
+                                                )
+                                            }
+                                        }
+                                        else -> {
+                                            removeRedundantMessages(removeSentMessage = false)
+                                            edit(sentMessage) {
+                                                +"User " + mention(user) + underline("didn't passed") + "captcha"
+                                            }
+                                            if (kickOnUnsuccess) {
+                                                banUser(chat, user, leftRestrictionsPermissions)
+                                            }
+                                        }
                                     }
-
-                                    kickOnUnsuccess -> banUser(chat, user, leftRestrictionsPermissions)
                                 }
                             }
                         }
