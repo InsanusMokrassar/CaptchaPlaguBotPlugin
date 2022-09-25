@@ -4,6 +4,8 @@ import com.benasher44.uuid.uuid4
 import dev.inmo.micro_utils.coroutines.*
 import dev.inmo.micro_utils.repos.create
 import dev.inmo.plagubot.Plugin
+import dev.inmo.plagubot.plugins.captcha.cas.CASChecker
+import dev.inmo.plagubot.plugins.captcha.cas.KtorCASChecker
 import dev.inmo.plagubot.plugins.captcha.db.CaptchaChatsSettingsRepo
 import dev.inmo.plagubot.plugins.captcha.provider.*
 import dev.inmo.plagubot.plugins.captcha.settings.ChatSettings
@@ -22,6 +24,9 @@ import dev.inmo.tgbotapi.libraries.cache.admins.*
 import dev.inmo.tgbotapi.types.BotCommand
 import dev.inmo.tgbotapi.types.chat.*
 import dev.inmo.tgbotapi.types.commands.BotCommandScope
+import dev.inmo.tgbotapi.utils.link
+import dev.inmo.tgbotapi.utils.mention
+import io.ktor.client.HttpClient
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -29,6 +34,7 @@ import org.jetbrains.exposed.sql.Database
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
+import org.koin.dsl.binds
 
 private const val enableAutoDeleteCommands = "captcha_auto_delete_commands_on"
 private const val disableAutoDeleteCommands = "captcha_auto_delete_commands_off"
@@ -121,11 +127,20 @@ class CaptchaBotPlugin : Plugin {
                 BotCommand(disableKickOnUnsuccess, "Not solved captcha users will NOT be kicked from the chat")
             )
         }
+        single {
+            KtorCASChecker(
+                HttpClient(),
+                get()
+            )
+        } binds arrayOf(
+            CASChecker::class
+        )
     }
 
     override suspend fun BehaviourContext.setupBotPlugin(koin: Koin) {
         val repo: CaptchaChatsSettingsRepo by koin.inject()
         val adminsAPI = koin.getOrNull<AdminsCacheAPI>()
+        val casChecker = koin.get<CASChecker>()
 
         suspend fun Chat.settings() = repo.getById(id) ?: repo.create(ChatSettings(id)).first()
 
@@ -133,17 +148,17 @@ class CaptchaBotPlugin : Plugin {
             initialFilter = {
                 it.chat is GroupChat
             }
-        ) {
-            val settings = it.chat.settings()
+        ) { msg ->
+            val settings = msg.chat.settings()
             if (!settings.enabled) return@onNewChatMembers
 
             safelyWithoutExceptions {
                 if (settings.autoRemoveEvents) {
-                    deleteMessage(it)
+                    deleteMessage(msg)
                 }
             }
-            val chat = it.chat.groupChatOrThrow()
-            val newUsers = it.chatEvent.members
+            val chat = msg.chat.groupChatOrThrow()
+            var newUsers = msg.chatEvent.members
             newUsers.forEach { user ->
                 restrictChatMember(
                     chat,
@@ -151,10 +166,25 @@ class CaptchaBotPlugin : Plugin {
                     permissions = RestrictionsChatPermissions
                 )
             }
+            newUsers = if (settings.casEnabled) {
+                newUsers.filterNot { user ->
+                    casChecker.isBanned(user.id).also { it ->
+                        if (it) {
+                            reply(
+                                msg
+                            ) {
+                                +"User " + mention(user) + " is banned in " + link("CAS System", "https://cas.chat/query?u=${user.id.chatId}")
+                            }
+                        }
+                    }
+                }
+            } else {
+                newUsers
+            }
             val defaultChatPermissions = LeftRestrictionsChatPermissions
 
             with (settings.captchaProvider) {
-                doAction(it.date, chat, newUsers, defaultChatPermissions, adminsAPI, settings.kickOnUnsuccess)
+                doAction(msg.date, chat, newUsers, defaultChatPermissions, adminsAPI, settings.kickOnUnsuccess)
             }
         }
 
