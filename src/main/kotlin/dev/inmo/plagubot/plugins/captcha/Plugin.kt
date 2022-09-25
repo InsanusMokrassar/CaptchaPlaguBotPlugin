@@ -50,6 +50,8 @@ private const val enableCaptcha = "enable_captcha"
 private val enableDisableKickOnUnsuccess = Regex("captcha_(enable|disable)_kick")
 private const val enableKickOnUnsuccess = "captcha_enable_kick"
 private const val disableKickOnUnsuccess = "captcha_disable_kick"
+private const val enableCAS = "captcha_enable_cas"
+private const val disableCAS = "captcha_disable_cas"
 
 private val changeCaptchaMethodCommandRegex = Regex(
     "captcha_use_((slot_machine)|(simple)|(expression))"
@@ -127,6 +129,18 @@ class CaptchaBotPlugin : Plugin {
                 BotCommand(disableKickOnUnsuccess, "Not solved captcha users will NOT be kicked from the chat")
             )
         }
+        single(named(uuid4().toString())) {
+            BotCommandFullInfo(
+                CommandsKeeperKey(BotCommandScope.AllChatAdministrators),
+                BotCommand(enableCAS, "Users banned in CAS will fail captcha automatically")
+            )
+        }
+        single(named(uuid4().toString())) {
+            BotCommandFullInfo(
+                CommandsKeeperKey(BotCommandScope.AllChatAdministrators),
+                BotCommand(disableCAS, "Users banned in CAS will NOT fail captcha automatically")
+            )
+        }
         single {
             KtorCASChecker(
                 HttpClient(),
@@ -168,12 +182,17 @@ class CaptchaBotPlugin : Plugin {
             }
             newUsers = if (settings.casEnabled) {
                 newUsers.filterNot { user ->
-                    casChecker.isBanned(user.id).also { it ->
-                        if (it) {
-                            reply(
-                                msg
-                            ) {
-                                +"User " + mention(user) + " is banned in " + link("CAS System", "https://cas.chat/query?u=${user.id.chatId}")
+                    casChecker.isBanned(user.id).also { isBanned ->
+                        runCatchingSafely {
+                            if (isBanned) {
+                                reply(
+                                    msg
+                                ) {
+                                    +"User " + mention(user) + " is banned in " + link("CAS System", "https://cas.chat/query?u=${user.id.chatId}")
+                                }
+                                if (settings.kickOnUnsuccess) {
+                                    banChatMember(msg.chat.id, user)
+                                }
                             }
                         }
                     }
@@ -352,6 +371,50 @@ class CaptchaBotPlugin : Plugin {
                     )
 
                     reply(message, "Ok, new users didn't passed captcha will NOT be kicked").apply {
+                        launchSafelyWithoutExceptions {
+                            delay(5000L)
+                            delete(this@apply)
+                        }
+                    }
+
+                    if (settings.autoRemoveCommands) {
+                        deleteMessage(message)
+                    }
+                }
+            }
+
+            onCommand(enableCAS) { message ->
+                message.doAfterVerification(adminsAPI) {
+                    val settings = message.chat.settings()
+
+                    repo.update(
+                        message.chat.id,
+                        settings.copy(casEnabled = true)
+                    )
+
+                    reply(message, "Ok, CAS banned user will automatically fail captcha").apply {
+                        launchSafelyWithoutExceptions {
+                            delay(5000L)
+                            delete(this@apply)
+                        }
+                    }
+
+                    if (settings.autoRemoveCommands) {
+                        deleteMessage(message)
+                    }
+                }
+            }
+
+            onCommand(disableCAS) { message ->
+                message.doAfterVerification(adminsAPI) {
+                    val settings = message.chat.settings()
+
+                    repo.update(
+                        message.chat.id,
+                        settings.copy(casEnabled = false)
+                    )
+
+                    reply(message, "Ok, CAS banned user will NOT automatically fail captcha").apply {
                         launchSafelyWithoutExceptions {
                             delay(5000L)
                             delete(this@apply)
